@@ -14,9 +14,11 @@ second byte-identical build, deactivates the preset units, and removes all four
 packages. It requires package-owned files to disappear while protected machine
 data and user renderer selection remain.
 
-Signing is a separate job behind the `private-release` GitHub Environment. The
-environment requires owner approval and contains only a replaceable signing
-subkey, its passphrase, and the primary and subkey fingerprints. The job
+Signing is a separate job using the `private-release` GitHub Environment. Before
+provisioning signing material, configure and verify required owner approval;
+the environment name alone provides no approval protection. Provision only a
+replaceable signing subkey, its passphrase, and the primary and subkey
+fingerprints. The job
 verifies the unsigned manifest before importing the subkey, verifies the exact
 primary and subkey fingerprints, requires the unchanged source tag to carry a
 valid signature from that key, signs the packages and pacman database, and then

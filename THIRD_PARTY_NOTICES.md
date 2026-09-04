@@ -2,6 +2,10 @@
 
 The built-in Touch Bar renderer contains generated alpha masks made from the following sources. The source fonts and vector files are not shipped.
 
+- [Cupertino Icons 1.0.9](https://pub.dev/packages/cupertino_icons/versions/1.0.9): `assets/CupertinoIcons.ttf`.
+- [Myna UI Icons, revision 8aae6f5](https://github.com/praveenjuge/mynaui-icons/tree/8aae6f585ae935721cf0009d0142f32e93577779): `icons-solid/keyboard-brightness-low.svg` and `keyboard-brightness-high.svg`.
+- [Inter 4.1](https://github.com/rsms/inter/releases/tag/v4.1): `extras/otf/Inter-Medium.otf`.
+
 ## Cupertino Icons and Myna UI Icons
 
 Cupertino Icons: Copyright (c) 2016 Vladimir Kharlampidi
