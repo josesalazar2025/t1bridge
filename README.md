@@ -18,4 +18,16 @@ MacBookPro14,2 is currently verified.
 The architecture, hardware acceptance runbook, and versioned interface
 contracts are in [`docs/`](docs/).
 
+## Package boundaries
+
+T1Bridge owns T1 hardware support, protected machine-data import and recovery,
+the fingerprint backend, and the default Touch Bar. Its core does not depend on
+Omarchy or the separately packaged libfprint/fprintd integration.
+
+Standard fprintd tools provide fingerprint management. A reusable management
+TUI and a baseline desktop-controls provider are planned as separate optional
+packages. Omarchy owns installer preservation, automatic setup, menus, themes,
+and HUD integration. Custom Touch Bar renderers remain user-selected programs,
+not bundled presets.
+
 Maintained by Andrew Boyd.
