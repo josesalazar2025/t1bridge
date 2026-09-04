@@ -364,7 +364,8 @@ jobs:
           repo-add --include-sigs t1bridge.db.tar.zst ./*.pkg.tar.zst
           cp --dereference t1bridge.db t1bridge.db.asset
           cp --dereference t1bridge.files t1bridge.files.asset
-          unlink t1bridge.db t1bridge.files
+          unlink t1bridge.db
+          unlink t1bridge.files
           mv t1bridge.db.asset t1bridge.db
           mv t1bridge.files.asset t1bridge.files
           sign t1bridge.db
