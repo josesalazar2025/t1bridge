@@ -1,0 +1,36 @@
+[Unit]
+Description=T1Bridge private NCM link readiness
+BindsTo=sys-subsystem-net-devices-%i.device
+After=sys-subsystem-net-devices-%i.device
+Before=t1-xart-storage@%i.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/t1bridge/t1-ncm-ready %I
+RemainAfterExit=yes
+User=root
+Group=root
+UMask=0077
+TimeoutStartSec=8
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN
+PrivateTmp=yes
+DevicePolicy=closed
+ProtectHome=yes
+ProtectSystem=strict
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+RemoveIPC=yes
+RestrictAddressFamilies=AF_INET6 AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native

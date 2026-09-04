@@ -1,0 +1,4 @@
+/*.pkg.tar.*
+/libfprint-*.tar.gz
+/pkg/
+/src/

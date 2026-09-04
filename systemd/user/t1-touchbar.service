@@ -1,0 +1,13 @@
+[Unit]
+Description=T1Bridge Touch Bar renderer launcher
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/t1bridge/t1-touchbar
+UMask=0077
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target

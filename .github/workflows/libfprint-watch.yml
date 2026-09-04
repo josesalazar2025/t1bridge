@@ -1,0 +1,72 @@
+name: fingerprint compatibility watch
+
+on:
+  schedule:
+    - cron: "23 11 * * 1"
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/libfprint-watch.yml
+      - packaging/arch/libfprint-t1bridge/**
+      - packaging/arch/fprintd-t1bridge/**
+  pull_request:
+    paths:
+      - .github/workflows/libfprint-watch.yml
+      - packaging/arch/libfprint-t1bridge/**
+      - packaging/arch/fprintd-t1bridge/**
+
+permissions:
+  contents: read
+
+jobs:
+  compatibility:
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel@sha256:a26046b7363dad8e2614858f4313949ae9b05c9c5f31de343a54864b9e20806f
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch_package: libfprint
+            package_dir: packaging/arch/libfprint-t1bridge
+          - arch_package: fprintd
+            package_dir: packaging/arch/fprintd-t1bridge
+    steps:
+      - name: Install checkout prerequisite
+        run: pacman -Syu --noconfirm --needed git
+
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+
+      - name: Compare Arch package version
+        env:
+          ARCH_PACKAGE: ${{ matrix.arch_package }}
+          PACKAGE_DIR: ${{ matrix.package_dir }}
+        run: |
+          package="$PACKAGE_DIR/PKGBUILD"
+          current=$(pacman -Si "$ARCH_PACKAGE" | sed -n 's/^Version[[:space:]]*:[[:space:]]*//p')
+          tracked=$(sed -n "s/^_arch_version='\([^']*\)'/\1/p" "$package")
+          test -n "$current"
+          test -n "$tracked"
+          if test "$current" != "$tracked"; then
+            echo "::error::Arch $ARCH_PACKAGE changed from $tracked to $current"
+            exit 1
+          fi
+          libfprint_version=$(bash -c 'source "$1"; printf "%s-%s" "$pkgver" "$pkgrel"' \
+            _ packaging/arch/libfprint-t1bridge/PKGBUILD)
+          fprintd_pin=$(bash -c 'source "$1"; printf "%s" "$_libfprint_t1bridge_version"' \
+            _ packaging/arch/fprintd-t1bridge/PKGBUILD)
+          test "$fprintd_pin" = "$libfprint_version"
+
+      - name: Verify pinned source accepts the patch
+        env:
+          PACKAGE_DIR: ${{ matrix.package_dir }}
+        run: |
+          useradd --create-home builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          runuser -u builder -- sh -eu -c '
+            cd "$1"
+            makepkg --nobuild --nodeps --noconfirm
+          ' sh "$PACKAGE_DIR"

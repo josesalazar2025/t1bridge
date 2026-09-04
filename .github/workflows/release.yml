@@ -1,0 +1,399 @@
+name: Private release candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing signed release tag
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel@sha256:a26046b7363dad8e2614858f4313949ae9b05c9c5f31de343a54864b9e20806f
+    timeout-minutes: 60
+    env:
+      TAG: ${{ inputs.tag }}
+    outputs:
+      commit_oid: ${{ steps.release-input.outputs.commit_oid }}
+      tag_oid: ${{ steps.release-input.outputs.tag_oid }}
+    steps:
+      - name: Configure package snapshot and install checkout prerequisite
+        run: |
+          printf '%s\n' \
+            'Server = https://archive.archlinux.org/repos/2026/08/29/$repo/os/$arch' \
+            >/etc/pacman.d/mirrorlist
+          pacman -Syu --noconfirm --needed git
+
+      - name: Check out the exact tag
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.tag }}
+
+      - name: Install build dependencies
+        run: |
+          pacman -S --noconfirm --needed dkms linux-headers pam pkgconf rust sudo xz
+
+      - name: Verify release input
+        id: release-input
+        run: |
+          set -euo pipefail
+          test "$(git describe --tags --exact-match HEAD)" = "$TAG"
+          test "$(git cat-file -t "refs/tags/$TAG")" = tag
+          version=${TAG#v}
+          test "$TAG" = "v$version"
+          for recipe in packaging/arch/t1bridge{,-dkms}/PKGBUILD; do
+            test "$(bash -c 'source "$1"; printf "%s" "$pkgver"' _ "$recipe")" = "$version"
+          done
+          printf 'commit_oid=%s\ntag_oid=%s\n' \
+            "$(git rev-parse "$TAG^{commit}")" \
+            "$(git rev-parse "refs/tags/$TAG")" >>"$GITHUB_OUTPUT"
+
+      - name: Create deterministic tagged source
+        id: source
+        run: |
+          set -euo pipefail
+          version=${TAG#v}
+          epoch=$(git show -s --format=%ct "$TAG^{commit}")
+          mkdir -p release
+          git archive --format=tar --mtime='1970-01-01T00:00:00Z' \
+            --prefix="t1bridge-$version/" "$TAG^{tree}" |
+            gzip -n >"release/t1bridge-$version.tar.gz"
+          archive_sha=$(sha256sum "release/t1bridge-$version.tar.gz" | cut -d' ' -f1)
+          for recipe in packaging/arch/t1bridge{,-dkms}/PKGBUILD; do
+            test "$(bash -c 'source "$1"; printf "%s" "${sha256sums[0]}"' _ "$recipe")" = "$archive_sha"
+          done
+          printf 'epoch=%s\nversion=%s\n' "$epoch" "$version" >>"$GITHUB_OUTPUT"
+          cp packaging/arch/t1bridge/PKGBUILD release/t1bridge.PKGBUILD
+          cp packaging/arch/t1bridge-dkms/PKGBUILD release/t1bridge-dkms.PKGBUILD
+          cp packaging/arch/libfprint-t1bridge/PKGBUILD \
+            release/libfprint-t1bridge.PKGBUILD
+          cp packaging/arch/libfprint-t1bridge/*.patch release/
+          cp packaging/arch/fprintd-t1bridge/PKGBUILD \
+            release/fprintd-t1bridge.PKGBUILD
+          cp packaging/arch/fprintd-t1bridge/*.patch release/
+
+      - name: Build twice
+        env:
+          SOURCE_DATE_EPOCH: ${{ steps.source.outputs.epoch }}
+        run: |
+          set -euo pipefail
+          useradd --create-home builder
+          printf 'builder ALL=(root) NOPASSWD: /usr/bin/pacman\n' >/etc/sudoers.d/t1bridge-builder
+          chmod 0440 /etc/sudoers.d/t1bridge-builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          alternate_root="$RUNNER_TEMP/deeper/alternate/t1bridge-source"
+          alternate_output="$GITHUB_WORKSPACE/build-alternate"
+          install -d -o builder -g builder "$alternate_root" "$alternate_output"
+          cp -a "$GITHUB_WORKSPACE/packaging" "$alternate_root/"
+          cp "$GITHUB_WORKSPACE/LICENSE" "$alternate_root/"
+          for pass in 1 2; do
+            output="$GITHUB_WORKSPACE/build-$pass"
+            install -d -o builder -g builder "$output"
+            for package in t1bridge-dkms t1bridge libfprint-t1bridge fprintd-t1bridge; do
+              directory="$GITHUB_WORKSPACE/packaging/arch/$package"
+              if test "$package" = t1bridge || test "$package" = t1bridge-dkms; then
+                cp "$GITHUB_WORKSPACE/release/t1bridge-${{ steps.source.outputs.version }}.tar.gz" \
+                  "$directory/"
+              fi
+              runuser -u builder -- env \
+                SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
+                PKGDEST="$output" \
+                makepkg --dir "$directory" \
+                  --cleanbuild --clean --force --noconfirm --nosign --syncdeps
+              if test "$package" = libfprint-t1bridge; then
+                mapfile -t built_libfprint < <(
+                  find "$output" -maxdepth 1 -type f \
+                    -name 'libfprint-t1bridge-*.pkg.tar.zst' -print
+                )
+                test "${#built_libfprint[@]}" -eq 1
+                pacman -U --noconfirm --ask=4 "${built_libfprint[0]}"
+              fi
+            done
+          done
+          for package in t1bridge-dkms t1bridge libfprint-t1bridge fprintd-t1bridge; do
+            directory="$alternate_root/packaging/arch/$package"
+            if test "$package" = t1bridge || test "$package" = t1bridge-dkms; then
+              cp "$GITHUB_WORKSPACE/release/t1bridge-${{ steps.source.outputs.version }}.tar.gz" \
+                "$directory/"
+            fi
+            runuser -u builder -- env \
+              SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
+              PKGDEST="$alternate_output" \
+              makepkg --dir "$directory" \
+                --cleanbuild --clean --force --noconfirm --nosign --syncdeps
+            if test "$package" = libfprint-t1bridge; then
+              mapfile -t built_libfprint < <(
+                find "$alternate_output" -maxdepth 1 -type f \
+                  -name 'libfprint-t1bridge-*.pkg.tar.zst' -print
+              )
+              test "${#built_libfprint[@]}" -eq 1
+              pacman -U --noconfirm --ask=4 "${built_libfprint[0]}"
+            fi
+          done
+
+      - name: Verify reproducibility and payload set
+        run: |
+          set -euo pipefail
+          mapfile -t first < <(find build-1 -maxdepth 1 -type f -name '*.pkg.tar.zst' -printf '%f\n' | sort)
+          mapfile -t second < <(find build-2 -maxdepth 1 -type f -name '*.pkg.tar.zst' -printf '%f\n' | sort)
+          mapfile -t alternate < <(find build-alternate -maxdepth 1 -type f -name '*.pkg.tar.zst' -printf '%f\n' | sort)
+          test "${#first[@]}" -eq 4
+          test "${first[*]}" = "${second[*]}"
+          test "${first[*]}" = "${alternate[*]}"
+          for package in "${first[@]}"; do
+            cmp "build-1/$package" "build-2/$package"
+            cp "build-1/$package" release/
+            bsdtar -xOf "build-1/$package" .MTREE | gzip -dc | \
+              grep -v '^\./\.BUILDINFO ' >"$RUNNER_TEMP/canonical.mtree"
+            bsdtar -xOf "build-alternate/$package" .MTREE | gzip -dc | \
+              grep -v '^\./\.BUILDINFO ' >"$RUNNER_TEMP/alternate.mtree"
+            cmp "$RUNNER_TEMP/canonical.mtree" "$RUNNER_TEMP/alternate.mtree"
+          done
+          (cd release && sha256sum *.PKGBUILD *.patch *.pkg.tar.zst *.tar.gz | sort -k2 >SHA256SUMS.unsigned)
+
+      - name: Verify isolated package lifecycle
+        run: |
+          set -euo pipefail
+          lifecycle_root="$RUNNER_TEMP/t1bridge-lifecycle"
+          install -d \
+            "$lifecycle_root/empty-hooks" \
+            "$lifecycle_root/var/cache/pacman/pkg" \
+            "$lifecycle_root/var/lib/pacman" \
+            "$lifecycle_root/var/log"
+          mapfile -t first < <(find build-1 -maxdepth 1 -type f -name '*.pkg.tar.zst' -print | sort)
+          mapfile -t second < <(find build-2 -maxdepth 1 -type f -name '*.pkg.tar.zst' -print | sort)
+          test "${#first[@]}" -eq 4
+          test "${#second[@]}" -eq 4
+          pacman --root "$lifecycle_root" \
+            --dbpath "$lifecycle_root/var/lib/pacman" \
+            --cachedir "$lifecycle_root/var/cache/pacman/pkg" \
+            --logfile "$lifecycle_root/var/log/pacman.log" \
+            --hookdir "$lifecycle_root/empty-hooks" \
+            --gpgdir /etc/pacman.d/gnupg \
+            --noconfirm --noscriptlet -Sy --needed libfprint fprintd dkms
+          pacman --root "$lifecycle_root" \
+            --dbpath "$lifecycle_root/var/lib/pacman" \
+            -Q libfprint fprintd
+          pacman --root "$lifecycle_root" \
+            --dbpath "$lifecycle_root/var/lib/pacman" \
+            --cachedir "$lifecycle_root/var/cache/pacman/pkg" \
+            --logfile "$lifecycle_root/var/log/pacman.log" \
+            --hookdir "$lifecycle_root/empty-hooks" \
+            --noconfirm --ask=4 --noscriptlet -U "${first[@]}"
+          pacman --root "$lifecycle_root" \
+            --dbpath "$lifecycle_root/var/lib/pacman" \
+            -Q t1bridge t1bridge-dkms libfprint-t1bridge fprintd-t1bridge
+          ! pacman --root "$lifecycle_root" \
+            --dbpath "$lifecycle_root/var/lib/pacman" \
+            -Qq | grep -Fxq libfprint
+          ! pacman --root "$lifecycle_root" \
+            --dbpath "$lifecycle_root/var/lib/pacman" \
+            -Qq | grep -Fxq fprintd
+          test -f "$lifecycle_root/usr/lib/modprobe.d/t1bridge.conf"
+          test -x "$lifecycle_root/usr/lib/fprintd"
+          test -f "$lifecycle_root/usr/lib/security/pam_fprintd.so"
+          test -f "$lifecycle_root/usr/lib/systemd/system/fprintd.service"
+          test -f "$lifecycle_root/usr/share/dbus-1/system-services/net.reactivated.Fprint.service"
+          test -f "$lifecycle_root/usr/share/dbus-1/system.d/net.reactivated.Fprint.conf"
+          systemd-sysusers --root="$lifecycle_root"
+          systemd-tmpfiles --root="$lifecycle_root" --create
+          test "$(stat -c '%U:%G:%a' "$lifecycle_root/run/t1bridge")" = "root:t1bridge:750"
+          systemctl --root="$lifecycle_root" preset \
+            t1-touchbar-hw.service t1-touchid-auth.socket \
+            t1bridge-fingerprint.socket t1bridge-import.service
+          systemctl --root="$lifecycle_root" --global preset t1-touchbar.service
+          systemctl --root="$lifecycle_root" is-enabled --quiet t1-touchbar-hw.service
+          systemctl --root="$lifecycle_root" is-enabled --quiet t1-touchid-auth.socket
+          systemctl --root="$lifecycle_root" is-enabled --quiet t1bridge-fingerprint.socket
+          ! systemctl --root="$lifecycle_root" is-enabled --quiet t1bridge-import.service
+          install -m 0600 /dev/null \
+            "$lifecycle_root/var/lib/t1bridge/machine-data/calibration.fscl"
+          install -d "$lifecycle_root/home/synthetic/.config/t1bridge"
+          install -m 0700 /usr/bin/true \
+            "$lifecycle_root/home/synthetic/.config/t1bridge/renderer"
+          pacman --root "$lifecycle_root" \
+            --dbpath "$lifecycle_root/var/lib/pacman" \
+            --cachedir "$lifecycle_root/var/cache/pacman/pkg" \
+            --logfile "$lifecycle_root/var/log/pacman.log" \
+            --hookdir "$lifecycle_root/empty-hooks" \
+            --noconfirm --noscriptlet -U "${second[@]}"
+          test -f "$lifecycle_root/var/lib/t1bridge/machine-data/calibration.fscl"
+          test -x "$lifecycle_root/home/synthetic/.config/t1bridge/renderer"
+          systemctl --root="$lifecycle_root" disable \
+            t1-touchbar-hw.service t1-touchid-auth.socket \
+            t1bridge-fingerprint.socket
+          systemctl --root="$lifecycle_root" --global disable t1-touchbar.service
+          pacman --root "$lifecycle_root" \
+            --dbpath "$lifecycle_root/var/lib/pacman" \
+            --cachedir "$lifecycle_root/var/cache/pacman/pkg" \
+            --logfile "$lifecycle_root/var/log/pacman.log" \
+            --hookdir "$lifecycle_root/empty-hooks" \
+            --noconfirm --noscriptlet -R \
+            t1bridge t1bridge-dkms libfprint-t1bridge fprintd-t1bridge
+          test ! -e "$lifecycle_root/usr/bin/t1bridge"
+          test ! -e "$lifecycle_root/usr/src/t1bridge-dkms-${{ steps.source.outputs.version }}"
+          test ! -e "$lifecycle_root/usr/lib/modprobe.d/t1bridge.conf"
+          test ! -e "$lifecycle_root/usr/lib/libfprint-2.so.2"
+          test ! -e "$lifecycle_root/usr/lib/fprintd"
+          test ! -e "$lifecycle_root/usr/lib/security/pam_fprintd.so"
+          test ! -e "$lifecycle_root/usr/lib/systemd/system/fprintd.service"
+          test ! -e "$lifecycle_root/usr/share/dbus-1/system-services/net.reactivated.Fprint.service"
+          test ! -e "$lifecycle_root/usr/share/dbus-1/system.d/net.reactivated.Fprint.conf"
+          test -f "$lifecycle_root/var/lib/t1bridge/machine-data/calibration.fscl"
+          test -x "$lifecycle_root/home/synthetic/.config/t1bridge/renderer"
+
+      - name: Save unsigned candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: unsigned-${{ inputs.tag }}
+          path: release/
+          if-no-files-found: error
+          retention-days: 7
+
+  sign:
+    needs: build
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel@sha256:a26046b7363dad8e2614858f4313949ae9b05c9c5f31de343a54864b9e20806f
+    timeout-minutes: 15
+    environment: private-release
+    permissions:
+      contents: write
+    env:
+      SIGNING_FINGERPRINT: ${{ vars.T1BRIDGE_SIGNING_SUBKEY_FINGERPRINT }}
+      SIGNING_PRIMARY_FINGERPRINT: ${{ vars.T1BRIDGE_SIGNING_PRIMARY_FINGERPRINT }}
+      TAG: ${{ inputs.tag }}
+    steps:
+      - name: Install repository tools
+        run: |
+          printf '%s\n' \
+            'Server = https://archive.archlinux.org/repos/2026/08/29/$repo/os/$arch' \
+            >/etc/pacman.d/mirrorlist
+          pacman -Syu --noconfirm --needed git github-cli gnupg pacman-contrib
+
+      - name: Check out the signed tag
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.tag }}
+
+      - name: Download unsigned candidate
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        with:
+          name: unsigned-${{ inputs.tag }}
+          path: release
+
+      - name: Verify unsigned candidate
+        run: |
+          set -euo pipefail
+          cd release
+          test -f SHA256SUMS.unsigned
+          test -f "t1bridge-${TAG#v}.tar.gz"
+          test -f t1bridge.PKGBUILD
+          test -f t1bridge-dkms.PKGBUILD
+          test -f libfprint-t1bridge.PKGBUILD
+          test -f fprintd-t1bridge.PKGBUILD
+          test -f 0001-Add-T1Bridge-fingerprint-driver.patch
+          test -f 0002-Use-relative-test-helper-path.patch
+          test -f 0001-Honor-driver-native-duplicate-detection.patch
+          test -f 0002-Fix-tests-for-current-GLib.patch
+          mapfile -t packages < <(find . -maxdepth 1 -type f \
+            -name '*.pkg.tar.zst' -printf '%f\n' | sort)
+          test "${#packages[@]}" -eq 4
+          sha256sum --check --strict SHA256SUMS.unsigned
+
+      - name: Import replaceable signing subkey
+        env:
+          SIGNING_SUBKEY: ${{ secrets.T1BRIDGE_SIGNING_SUBKEY }}
+        run: |
+          set -euo pipefail
+          test -n "$SIGNING_FINGERPRINT"
+          test -n "$SIGNING_PRIMARY_FINGERPRINT"
+          test -n "$SIGNING_SUBKEY"
+          export GNUPGHOME="$RUNNER_TEMP/t1bridge-gnupg"
+          install -d -m 0700 "$GNUPGHOME"
+          printf '%s' "$SIGNING_SUBKEY" | gpg --batch --import
+          listing=$(LC_ALL=C gpg --list-secret-keys "$SIGNING_FINGERPRINT")
+          printf '%s\n' "$listing" | grep -q '^sec#'
+          test "$(printf '%s\n' "$listing" | grep -c '^ssb')" -eq 1
+          colon_listing=$(gpg --batch --with-colons \
+            --list-secret-keys "$SIGNING_FINGERPRINT")
+          printf '%s\n' "$colon_listing" |
+            awk -F: '$1 == "ssb" { count++; if ($12 !~ /s/) bad=1 }
+              END { exit !(count == 1 && !bad) }'
+          actual=$(printf '%s\n' "$colon_listing" |
+            awk -F: '$1 == "ssb" { want=1; next } want && $1 == "fpr" { print $10; exit }')
+          test "$actual" = "$SIGNING_FINGERPRINT"
+          actual_primary=$(gpg --batch --with-colons --list-keys "$SIGNING_FINGERPRINT" |
+            awk -F: '$1 == "pub" { want=1; next } want && $1 == "fpr" { print $10; exit }')
+          test "$actual_primary" = "$SIGNING_PRIMARY_FINGERPRINT"
+          printf 'GNUPGHOME=%s\n' "$GNUPGHOME" >>"$GITHUB_ENV"
+
+      - name: Verify exact signed tag
+        env:
+          EXPECTED_COMMIT_OID: ${{ needs.build.outputs.commit_oid }}
+          EXPECTED_TAG_OID: ${{ needs.build.outputs.tag_oid }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse "refs/tags/$TAG")" = "$EXPECTED_TAG_OID"
+          test "$(git rev-parse "$TAG^{commit}")" = "$EXPECTED_COMMIT_OID"
+          git verify-tag "$TAG"
+
+      - name: Sign packages and repository
+        env:
+          SIGNING_PASSPHRASE: ${{ secrets.T1BRIDGE_SIGNING_SUBKEY_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          test -n "$SIGNING_PASSPHRASE"
+          cd release
+          sign() {
+            printf '%s' "$SIGNING_PASSPHRASE" |
+              gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 \
+              --local-user "$SIGNING_FINGERPRINT!" \
+              --detach-sign "$1"
+            gpg --batch --verify "$1.sig" "$1"
+          }
+          for package in *.pkg.tar.zst; do sign "$package"; done
+          repo-add --include-sigs t1bridge.db.tar.zst ./*.pkg.tar.zst
+          cp --dereference t1bridge.db t1bridge.db.asset
+          cp --dereference t1bridge.files t1bridge.files.asset
+          unlink t1bridge.db t1bridge.files
+          mv t1bridge.db.asset t1bridge.db
+          mv t1bridge.files.asset t1bridge.files
+          sign t1bridge.db
+          sign t1bridge.files
+          gpg --batch --armor --export "$SIGNING_FINGERPRINT" >t1bridge-signing-key.asc
+          sha256sum *.PKGBUILD *.patch *.asc *.db *.db.tar.zst *.files \
+            *.files.tar.zst *.pkg.tar.zst *.sig *.tar.gz \
+            SHA256SUMS.unsigned |
+            sort -k2 >SHA256SUMS
+
+      - name: Clear signing material
+        if: always()
+        run: |
+          set -euo pipefail
+          cleanup_home="$RUNNER_TEMP/t1bridge-gnupg"
+          test -n "$RUNNER_TEMP"
+          GNUPGHOME="$cleanup_home" gpgconf --kill all || true
+          rm -rf -- "$cleanup_home"
+
+      - name: Publish private release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(gh repo view "$GITHUB_REPOSITORY" --json visibility --jq .visibility)" = PRIVATE
+          ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1
+          gh release create "$TAG" release/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --draft \
+            --title "T1Bridge ${TAG#v}" \
+            --notes "Private pre-release candidate. Not approved for publication."

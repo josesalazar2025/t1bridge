@@ -1,0 +1,14 @@
+[Unit]
+Description=T1Bridge standard fingerprint socket
+
+[Socket]
+ListenSequentialPacket=/run/t1bridge/fingerprint.sock
+Service=t1-touchid-auth.service
+SocketUser=root
+SocketGroup=root
+SocketMode=0600
+DirectoryMode=0750
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

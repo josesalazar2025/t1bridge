@@ -1,0 +1,5 @@
+# Start persistent hardware state and socket-activate biometric requests.
+enable t1-touchbar-hw.service
+enable t1-touchid-auth.socket
+enable t1bridge-fingerprint.socket
+disable t1bridge-keybag.service

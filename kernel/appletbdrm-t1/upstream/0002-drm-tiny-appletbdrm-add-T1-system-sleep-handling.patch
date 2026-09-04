@@ -1,0 +1,147 @@
+From 9f8b32e7a7fc78bd21c29abf909403273a63630a Mon Sep 17 00:00:00 2001
+From: Andrew Boyd <andrew@formkit.com>
+Date: Wed, 26 Aug 2026 23:24:44 -0400
+Subject: [PATCH 2/2] drm/tiny: appletbdrm: add T1 system sleep handling
+
+Save and restore the DRM mode configuration through the USB suspend
+and resume callbacks. Make the custom plane reset hook reentrant because
+the atomic resume helper resets mode configuration while a plane state
+already exists.
+
+For T1 devices, park the display with the required clear and HID
+feature-report sequence before sleep. On resume, clear endpoint halts,
+reestablish the display protocol session, and clear the display before
+the DRM helper restores the saved framebuffer.
+---
+ drivers/gpu/drm/tiny/appletbdrm.c | 86 ++++++++++++++++++++++++++++++-
+ 1 file changed, 85 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/tiny/appletbdrm.c b/drivers/gpu/drm/tiny/appletbdrm.c
+index 61e7b28b7..614f5dfdd 100644
+--- a/drivers/gpu/drm/tiny/appletbdrm.c
++++ b/drivers/gpu/drm/tiny/appletbdrm.c
+@@ -30,6 +30,7 @@
+ #include <drm/drm_gem_atomic_helper.h>
+ #include <drm/drm_gem_framebuffer_helper.h>
+ #include <drm/drm_gem_shmem_helper.h>
++#include <drm/drm_modeset_helper.h>
+ #include <drm/drm_plane.h>
+ #include <drm/drm_print.h>
+ #include <drm/drm_probe_helper.h>
+@@ -44,6 +45,7 @@
+ 
+ #define APPLETBDRM_BULK_MSG_TIMEOUT	1000
+ #define APPLETBDRM_T1_PRODUCT_ID		0x8600
++#define APPLETBDRM_T1_HID_INTERFACE	6
+ #define APPLETBDRM_T1_RESPONSE_ATTEMPTS	8
+ 
+ #define drm_to_adev(_drm)		container_of(_drm, struct appletbdrm_device, drm)
+@@ -491,11 +493,17 @@ static void appletbdrm_primary_plane_helper_atomic_disable(struct drm_plane *pla
+ 	drm_dev_exit(idx);
+ }
+ 
++static void appletbdrm_primary_plane_destroy_state(struct drm_plane *plane,
++						   struct drm_plane_state *state);
++
+ static void appletbdrm_primary_plane_reset(struct drm_plane *plane)
+ {
+ 	struct appletbdrm_plane_state *appletbdrm_state;
+ 
+-	WARN_ON(plane->state);
++	if (plane->state) {
++		appletbdrm_primary_plane_destroy_state(plane, plane->state);
++		plane->state = NULL;
++	}
+ 
+ 	appletbdrm_state = kzalloc_obj(*appletbdrm_state);
+ 	if (!appletbdrm_state)
+@@ -813,6 +821,79 @@ static void appletbdrm_shutdown(struct usb_interface *intf)
+ 	drm_atomic_helper_shutdown(&adev->drm);
+ }
+ 
++static void appletbdrm_t1_park(struct appletbdrm_device *adev)
++{
++	static const u8 report[15] = { 0x03, 0x01, 0xf4, 0x01 };
++	struct usb_device *udev = adev_to_udev(adev);
++	u8 *buffer;
++	int ret;
++
++	appletbdrm_clear_display(adev);
++	appletbdrm_clear_display(adev);
++
++	buffer = kmemdup(report, sizeof(report), GFP_KERNEL);
++	if (!buffer)
++		return;
++
++	ret = usb_control_msg(udev, usb_sndctrlpipe(udev, 0), 0x09, 0x21,
++			      0x0303, APPLETBDRM_T1_HID_INTERFACE, buffer,
++			      sizeof(report), USB_CTRL_SET_TIMEOUT);
++	kfree(buffer);
++	if (ret < 0)
++		drm_warn(&adev->drm, "Failed to park T1 display (%d)\n", ret);
++
++	appletbdrm_clear_display(adev);
++}
++
++static int appletbdrm_t1_rearm(struct appletbdrm_device *adev)
++{
++	struct usb_device *udev = adev_to_udev(adev);
++	int ret;
++
++	usb_clear_halt(udev, usb_sndbulkpipe(udev, adev->out_ep));
++	usb_clear_halt(udev, usb_rcvbulkpipe(udev, adev->in_ep));
++
++	ret = appletbdrm_get_information(adev);
++	if (ret)
++		return ret;
++
++	ret = appletbdrm_signal_readiness(adev);
++	if (ret)
++		return ret;
++
++	ret = appletbdrm_clear_display(adev);
++	if (ret)
++		return ret;
++
++	return appletbdrm_clear_display(adev);
++}
++
++static int appletbdrm_suspend(struct usb_interface *intf, pm_message_t message)
++{
++	struct appletbdrm_device *adev = usb_get_intfdata(intf);
++	int ret;
++
++	ret = drm_mode_config_helper_suspend(&adev->drm);
++	if (!ret && appletbdrm_is_t1(adev))
++		appletbdrm_t1_park(adev);
++
++	return ret;
++}
++
++static int appletbdrm_resume(struct usb_interface *intf)
++{
++	struct appletbdrm_device *adev = usb_get_intfdata(intf);
++	int ret;
++
++	if (appletbdrm_is_t1(adev)) {
++		ret = appletbdrm_t1_rearm(adev);
++		if (ret)
++			drm_err(&adev->drm, "Failed to rearm T1 display (%d)\n", ret);
++	}
++
++	return drm_mode_config_helper_resume(&adev->drm);
++}
++
+ static const struct usb_device_id appletbdrm_usb_id_table[] = {
+ 	{ USB_DEVICE_INTERFACE_CLASS(0x05ac, 0x8302, USB_CLASS_AUDIO_VIDEO) },
+ 	{ USB_DEVICE_INTERFACE_CLASS(0x05ac, APPLETBDRM_T1_PRODUCT_ID,
+@@ -826,6 +907,9 @@ static struct usb_driver appletbdrm_usb_driver = {
+ 	.probe		= appletbdrm_probe,
+ 	.disconnect	= appletbdrm_disconnect,
+ 	.shutdown	= appletbdrm_shutdown,
++	.suspend	= appletbdrm_suspend,
++	.resume		= appletbdrm_resume,
++	.reset_resume	= appletbdrm_resume,
+ 	.id_table	= appletbdrm_usb_id_table,
+ };
+ module_usb_driver(appletbdrm_usb_driver);

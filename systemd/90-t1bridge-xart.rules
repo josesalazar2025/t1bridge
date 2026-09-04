@@ -1,0 +1,6 @@
+# Keep general network managers off the private T1 NCM function, then start its owner.
+# Descriptor properties are available on the initial event before driver metadata is.
+ACTION=="add", SUBSYSTEM=="net", ENV{ID_VENDOR_ID}=="05ac", \
+  ENV{ID_MODEL_ID}=="8600", ENV{ID_USB_INTERFACE_NUM}=="04", \
+  ENV{ID_NET_MANAGED_BY}="org.t1bridge", ENV{NM_UNMANAGED}="1", \
+  TAG+="systemd", ENV{SYSTEMD_WANTS}+="t1-xart-storage@$name.service"

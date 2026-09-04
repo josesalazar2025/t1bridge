@@ -1,0 +1,35 @@
+[Unit]
+Description=T1Bridge Touch Bar hardware service
+BindsTo=dev-dri-touchbar.device
+Requires=t1-touchbar-hw.socket
+After=dev-dri-touchbar.device t1-touchbar-hw.socket
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/t1bridge/t1-touchbar-hw
+Sockets=t1-touchbar-hw.socket
+User=root
+Group=t1bridge
+RuntimeDirectory=t1bridge
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
+UMask=0007
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

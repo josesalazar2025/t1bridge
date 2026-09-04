@@ -1,0 +1,7 @@
+# Keep the T1 display off the desktop seat and expose a stable DRM path.
+ACTION=="add|change", SUBSYSTEM=="drm", KERNEL=="card[0-9]*", \
+  SUBSYSTEMS=="usb", ATTRS{idVendor}=="05ac", ATTRS{idProduct}=="8600", \
+  ENV{ID_SEAT}="seat-touchbar", TAG+="seat", TAG+="seat-touchbar", \
+  TAG-="master-of-seat", TAG-="uaccess", \
+  SYMLINK+="dri/touchbar", TAG+="systemd", \
+  ENV{SYSTEMD_WANTS}="t1-touchbar-hw.service"

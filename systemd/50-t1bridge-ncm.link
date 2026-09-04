@@ -1,0 +1,7 @@
+[Match]
+Driver=apple_t1_ncm
+Type=ether
+
+[Link]
+NamePolicy=keep
+Property=ID_NET_MANAGED_BY=org.t1bridge NM_UNMANAGED=1

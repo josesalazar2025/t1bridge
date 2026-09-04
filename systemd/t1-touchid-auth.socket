@@ -1,0 +1,14 @@
+[Unit]
+Description=T1Bridge Touch ID authentication socket
+
+[Socket]
+ListenSequentialPacket=/run/t1-touchid/auth.sock
+Service=t1-touchid-auth.service
+SocketUser=root
+SocketGroup=t1bridge
+SocketMode=0660
+DirectoryMode=0755
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

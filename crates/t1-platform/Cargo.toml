@@ -1,0 +1,31 @@
+[package]
+name = "t1-platform"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+build = "build.rs"
+
+[features]
+default = []
+frame-memfd = []
+import-fs = []
+preserved-efi = []
+preserved-efi-discovery = ["preserved-efi"]
+secret-wipe = []
+sep-operation = []
+seqpacket = []
+system-brightness = []
+touchbar-drm = []
+touchbar-io = []
+touchbar-session = []
+usb-cycle-guard = []
+xz = []
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"

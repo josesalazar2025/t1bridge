@@ -1,0 +1,408 @@
+#define _GNU_SOURCE
+
+#include "t1_efi_roots.h"
+#include "t1_efi_roots_test.h"
+
+#include <errno.h>
+#include <fcntl.h>
+#include <libudev.h>
+#include <sched.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <strings.h>
+#include <sys/mount.h>
+#include <sys/stat.h>
+#include <sys/sysmacros.h>
+#include <unistd.h>
+
+#define T1_ESP_PARTITION_TYPE "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
+
+enum open_root_result {
+	OPEN_ROOT_OK = 0,
+	OPEN_ROOT_SKIP = 1,
+};
+
+static unsigned long readonly_mount_flags(void)
+{
+	return MS_RDONLY | MS_NOSUID | MS_NODEV | MS_NOEXEC |
+		MS_NOSYMFOLLOW;
+}
+
+static int filesystem_is_fat_or_unknown(const char *filesystem_type)
+{
+	static const char *const accepted[] = {
+		"fat", "fat12", "fat16", "fat32", "msdos", "vfat",
+	};
+	size_t index;
+
+	if (filesystem_type == NULL || filesystem_type[0] == '\0')
+		return 1;
+	for (index = 0; index < sizeof(accepted) / sizeof(accepted[0]);
+	     ++index) {
+		if (strcasecmp(filesystem_type, accepted[index]) == 0)
+			return 1;
+	}
+	return 0;
+}
+
+static int candidate_is_eligible(const char *device_type,
+	const char *partition_type, const char *filesystem_type)
+{
+	return device_type != NULL &&
+		strcmp(device_type, "partition") == 0 &&
+		partition_type != NULL &&
+		strcasecmp(partition_type, T1_ESP_PARTITION_TYPE) == 0 &&
+		filesystem_is_fat_or_unknown(filesystem_type);
+}
+
+static int compare_candidates(const void *left_value, const void *right_value)
+{
+	const struct t1_efi_test_candidate *left = left_value;
+	const struct t1_efi_test_candidate *right = right_value;
+
+	if (left->major_number < right->major_number)
+		return -1;
+	if (left->major_number > right->major_number)
+		return 1;
+	if (left->minor_number < right->minor_number)
+		return -1;
+	if (left->minor_number > right->minor_number)
+		return 1;
+	return 0;
+}
+
+static int same_candidate(const struct t1_efi_test_candidate *left,
+	const struct t1_efi_test_candidate *right)
+{
+	return left->major_number == right->major_number &&
+		left->minor_number == right->minor_number;
+}
+
+static int close_owned(int descriptor)
+{
+	int result = close(descriptor);
+
+	/* Linux releases the descriptor even when close reports EINTR. */
+	return result < 0 && errno == EINTR ? 0 : result;
+}
+
+static int real_close_descriptor(void *context, int descriptor)
+{
+	(void)context;
+	return close_owned(descriptor);
+}
+
+static int device_number_is_valid(uint32_t major_number,
+	uint32_t minor_number)
+{
+	(void)minor_number;
+	return major_number != 0;
+}
+
+static int mount_error_status(int error_number)
+{
+	return error_number == ENOENT ?
+		OPEN_ROOT_SKIP : T1_EFI_ROOTS_INSPECTION_FAILED;
+}
+
+static int real_enumerate(void *context,
+	struct t1_efi_test_candidate *candidates, size_t capacity,
+	size_t *count)
+{
+	struct udev *udev = NULL;
+	struct udev_enumerate *enumeration = NULL;
+	struct udev_list_entry *devices;
+	struct udev_list_entry *entry;
+	int status = T1_EFI_ROOTS_ENUMERATION_FAILED;
+
+	(void)context;
+	*count = 0;
+	udev = udev_new();
+	if (udev == NULL)
+		goto out;
+	enumeration = udev_enumerate_new(udev);
+	if (enumeration == NULL ||
+	    udev_enumerate_add_match_subsystem(enumeration, "block") < 0 ||
+	    udev_enumerate_scan_devices(enumeration) < 0)
+		goto out;
+
+	devices = udev_enumerate_get_list_entry(enumeration);
+	udev_list_entry_foreach(entry, devices) {
+		const char *path = udev_list_entry_get_name(entry);
+		struct udev_device *device;
+		const char *device_type;
+		const char *partition_type;
+		const char *filesystem_type;
+		dev_t device_number;
+
+		if (path == NULL)
+			goto out;
+		device = udev_device_new_from_syspath(udev, path);
+		if (device == NULL)
+			goto out;
+		device_type = udev_device_get_devtype(device);
+		partition_type = udev_device_get_property_value(device,
+			"ID_PART_ENTRY_TYPE");
+		filesystem_type = udev_device_get_property_value(device,
+			"ID_FS_TYPE");
+		if (!candidate_is_eligible(device_type, partition_type,
+		    filesystem_type)) {
+			udev_device_unref(device);
+			continue;
+		}
+		if (*count == capacity) {
+			udev_device_unref(device);
+			status = T1_EFI_ROOTS_CANDIDATE_LIMIT;
+			goto out;
+		}
+		device_number = udev_device_get_devnum(device);
+		candidates[*count].major_number = major(device_number);
+		candidates[*count].minor_number = minor(device_number);
+		if (!device_number_is_valid(candidates[*count].major_number,
+		    candidates[*count].minor_number)) {
+			udev_device_unref(device);
+			goto out;
+		}
+		++*count;
+		udev_device_unref(device);
+	}
+	status = T1_EFI_ROOTS_OK;
+
+out:
+	if (enumeration != NULL)
+		udev_enumerate_unref(enumeration);
+	if (udev != NULL)
+		udev_unref(udev);
+	return status;
+}
+
+static int real_make_private_namespace(void *context)
+{
+	(void)context;
+	if (unshare(CLONE_NEWNS) < 0)
+		return T1_EFI_ROOTS_NAMESPACE_FAILED;
+	if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) < 0)
+		return T1_EFI_ROOTS_NAMESPACE_FAILED;
+	return T1_EFI_ROOTS_OK;
+}
+
+static int open_directory_component(int parent, const char *name)
+{
+	int descriptor;
+
+	do {
+		descriptor = openat(parent, name, O_RDONLY | O_DIRECTORY |
+			O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+	} while (descriptor < 0 && errno == EINTR);
+	return descriptor;
+}
+
+static int root_contains_apple(int root)
+{
+	int efi;
+	int apple;
+	int result;
+
+	efi = open_directory_component(root, "EFI");
+	if (efi < 0)
+		return errno == ENOENT || errno == ENOTDIR ? 0 : -1;
+	apple = open_directory_component(efi, "APPLE");
+	if (apple < 0)
+		result = errno == ENOENT || errno == ENOTDIR ? 0 : -1;
+	else
+		result = 1;
+	if (apple >= 0 && close_owned(apple) < 0)
+		result = -1;
+	if (close_owned(efi) < 0)
+		result = -1;
+	return result;
+}
+
+static int remove_unmounted_directory(char *mountpoint)
+{
+	if (rmdir(mountpoint) < 0)
+		return T1_EFI_ROOTS_CLEANUP_FAILED;
+	return T1_EFI_ROOTS_OK;
+}
+
+static int real_open_root(void *context,
+	const struct t1_efi_test_candidate *candidate,
+	unsigned long mount_flags, int *root_descriptor)
+{
+	char source[64];
+	char mountpoint[] = "/run/t1bridge-efi.XXXXXX";
+	struct stat info;
+	int root = -1;
+	int contains_apple;
+	int mounted = 0;
+	int status = T1_EFI_ROOTS_INSPECTION_FAILED;
+
+	(void)context;
+	*root_descriptor = -1;
+	if (!device_number_is_valid(candidate->major_number,
+	    candidate->minor_number) ||
+	    snprintf(source, sizeof(source), "/dev/block/%u:%u",
+	    candidate->major_number, candidate->minor_number) < 0)
+		return T1_EFI_ROOTS_INSPECTION_FAILED;
+	if (stat(source, &info) < 0)
+		return mount_error_status(errno);
+	if (!S_ISBLK(info.st_mode) ||
+	    major(info.st_rdev) != candidate->major_number ||
+	    minor(info.st_rdev) != candidate->minor_number)
+		return T1_EFI_ROOTS_INSPECTION_FAILED;
+	if (mkdtemp(mountpoint) == NULL)
+		return T1_EFI_ROOTS_INSPECTION_FAILED;
+	if (mount(source, mountpoint, "vfat", mount_flags, NULL) < 0) {
+		int mount_status = mount_error_status(errno);
+
+		status = remove_unmounted_directory(mountpoint);
+		return status == T1_EFI_ROOTS_OK ? mount_status : status;
+	}
+	mounted = 1;
+	root = open_directory_component(AT_FDCWD, mountpoint);
+	if (root < 0)
+		goto out;
+	contains_apple = root_contains_apple(root);
+	if (contains_apple < 0)
+		goto out;
+	status = contains_apple == 0 ? OPEN_ROOT_SKIP : OPEN_ROOT_OK;
+
+out:
+	/* The open root descriptor pins the mount after namespace detachment. */
+	if (mounted && umount2(mountpoint, MNT_DETACH) < 0)
+		status = T1_EFI_ROOTS_CLEANUP_FAILED;
+	if (remove_unmounted_directory(mountpoint) != T1_EFI_ROOTS_OK)
+		status = T1_EFI_ROOTS_CLEANUP_FAILED;
+	if (status == OPEN_ROOT_OK) {
+		*root_descriptor = root;
+	} else if (root >= 0 && close_owned(root) < 0) {
+		status = T1_EFI_ROOTS_CLEANUP_FAILED;
+	}
+	return status;
+}
+
+static void initialize_outputs(int *root_descriptors, size_t capacity,
+	size_t *root_count)
+{
+	size_t index;
+
+	*root_count = 0;
+	for (index = 0; index < capacity; ++index)
+		root_descriptors[index] = -1;
+}
+
+static int close_outputs(int *root_descriptors, size_t count,
+	const struct t1_efi_test_ops *ops)
+{
+	int failed = 0;
+
+	while (count > 0) {
+		--count;
+		if (root_descriptors[count] >= 0 &&
+		    ops->close_descriptor(ops->context,
+		    root_descriptors[count]) < 0)
+			failed = 1;
+		root_descriptors[count] = -1;
+	}
+	return failed;
+}
+
+int t1_efi_roots_discover_with_ops(int *root_descriptors,
+	size_t descriptor_capacity, size_t *root_count,
+	const struct t1_efi_test_ops *ops)
+{
+	struct t1_efi_test_candidate candidates[T1_EFI_ROOT_LIMIT];
+	size_t candidate_count = 0;
+	size_t output_count = 0;
+	size_t index;
+	int status;
+
+	if (root_descriptors == NULL || root_count == NULL || ops == NULL ||
+	    ops->enumerate == NULL || ops->make_private_namespace == NULL ||
+	    ops->open_root == NULL || ops->close_descriptor == NULL ||
+	    descriptor_capacity == 0 ||
+	    descriptor_capacity > T1_EFI_ROOT_LIMIT)
+		return T1_EFI_ROOTS_INVALID_ARGUMENT;
+	initialize_outputs(root_descriptors, descriptor_capacity, root_count);
+	status = ops->enumerate(ops->context, candidates,
+		descriptor_capacity, &candidate_count);
+	if (status != T1_EFI_ROOTS_OK)
+		return status;
+	if (candidate_count > descriptor_capacity)
+		return T1_EFI_ROOTS_CANDIDATE_LIMIT;
+	if (candidate_count == 0)
+		return T1_EFI_ROOTS_OK;
+	qsort(candidates, candidate_count, sizeof(candidates[0]),
+		compare_candidates);
+	status = ops->make_private_namespace(ops->context);
+	if (status != T1_EFI_ROOTS_OK)
+		return status;
+
+	for (index = 0; index < candidate_count; ++index) {
+		int root = -1;
+
+		if (index > 0 && same_candidate(&candidates[index - 1],
+		    &candidates[index]))
+			continue;
+		status = ops->open_root(ops->context, &candidates[index],
+			readonly_mount_flags(), &root);
+		if (status == OPEN_ROOT_SKIP)
+			continue;
+		if (status != OPEN_ROOT_OK || root < 0) {
+			if (root >= 0)
+				(void)ops->close_descriptor(ops->context, root);
+			if (close_outputs(root_descriptors, output_count, ops) != 0)
+				status = T1_EFI_ROOTS_CLEANUP_FAILED;
+			return status == OPEN_ROOT_OK ?
+				T1_EFI_ROOTS_INSPECTION_FAILED : status;
+		}
+		root_descriptors[output_count++] = root;
+	}
+	*root_count = output_count;
+	return T1_EFI_ROOTS_OK;
+}
+
+int t1_efi_roots_discover(int *root_descriptors, size_t descriptor_capacity,
+	size_t *root_count)
+{
+	const struct t1_efi_test_ops ops = {
+		.enumerate = real_enumerate,
+		.make_private_namespace = real_make_private_namespace,
+		.open_root = real_open_root,
+		.close_descriptor = real_close_descriptor,
+		.context = NULL,
+	};
+
+	return t1_efi_roots_discover_with_ops(root_descriptors,
+		descriptor_capacity, root_count, &ops);
+}
+
+int t1_efi_roots_is_root(void)
+{
+	return geteuid() == 0 ? 1 : 0;
+}
+
+int t1_efi_roots_test_candidate_is_eligible(const char *device_type,
+	const char *partition_type, const char *filesystem_type)
+{
+	return candidate_is_eligible(device_type, partition_type,
+		filesystem_type);
+}
+
+int t1_efi_roots_test_device_number_is_valid(uint32_t major_number,
+	uint32_t minor_number)
+{
+	return device_number_is_valid(major_number, minor_number);
+}
+
+int t1_efi_roots_test_mount_error_status(int error_number)
+{
+	return mount_error_status(error_number);
+}
+
+unsigned long t1_efi_roots_test_mount_flags(void)
+{
+	return readonly_mount_flags();
+}

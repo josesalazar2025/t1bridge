@@ -1,0 +1,22 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/t1-bridge",
+    "crates/t1-daemons",
+    "crates/t1-import",
+    "crates/t1-platform",
+    "crates/t1-touchbar-hw",
+    "crates/t1-touchbar",
+]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+rust-version = "1.88"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"

@@ -1,0 +1,57 @@
+[package]
+name = "t1-daemons"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[features]
+default = []
+auth-broker-service = []
+keybag-relay-service = []
+legacy-recovery = ["auth-broker-service"]
+standard-fingerprint-smoke = ["auth-broker-service"]
+
+[[bin]]
+name = "t1-touchid-auth"
+path = "src/bin/t1-touchid-auth.rs"
+required-features = ["auth-broker-service"]
+
+[[bin]]
+name = "t1-touchid"
+path = "src/bin/t1-touchid.rs"
+
+[[bin]]
+name = "t1-pam-auth"
+path = "src/bin/t1-pam-auth.rs"
+
+[[bin]]
+name = "t1-ncm-ready"
+path = "src/bin/t1-ncm-ready.rs"
+
+[[bin]]
+name = "t1-keybag-relay"
+path = "src/bin/t1-keybag-relay.rs"
+required-features = ["keybag-relay-service"]
+
+[[bin]]
+name = "t1-legacy-recovery"
+path = "src/bin/t1-legacy-recovery.rs"
+required-features = ["legacy-recovery"]
+
+[[bin]]
+name = "t1-standard-fingerprint-smoke"
+path = "src/bin/t1-standard-fingerprint-smoke.rs"
+required-features = ["standard-fingerprint-smoke"]
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
+
+[dependencies]
+t1-bridge = { path = "../t1-bridge", version = "=0.0.0" }
+t1-platform = { path = "../t1-platform", version = "=0.0.0", features = ["secret-wipe", "sep-operation", "seqpacket"] }

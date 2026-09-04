@@ -1,0 +1,12 @@
+[Unit]
+Description=T1Bridge Touch Bar hardware socket
+BindsTo=dev-dri-touchbar.device
+After=dev-dri-touchbar.device
+
+[Socket]
+ListenSequentialPacket=/run/t1bridge/touchbar.sock
+SocketUser=root
+SocketGroup=t1bridge
+SocketMode=0660
+DirectoryMode=0750
+RemoveOnStop=yes

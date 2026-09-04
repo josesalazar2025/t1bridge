@@ -1,0 +1,300 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Andrew Boyd <andrew@formkit.com>
+Date: Sat, 29 Aug 2026 18:05:00 -0400
+Subject: [PATCH] media: uvcvideo: parse H.264 descriptors safely
+
+Recognize UVC 1.5 H.264 format and frame descriptors.
+
+Reject malformed lengths, dimensions, intervals, and frame-size overflows.
+---
+ drivers/media/usb/uvc/Makefile     |   2 +-
+ drivers/media/usb/uvc/uvc_driver.c | 104 +++++++++++++++++++++++++++--
+ drivers/media/usb/uvc/uvc_h264.c   |  65 ++++++++++++++++++
+ drivers/media/usb/uvc/uvc_h264.h   |  25 +++++++
+ 4 files changed, 191 insertions(+), 5 deletions(-)
+ create mode 100644 drivers/media/usb/uvc/uvc_h264.c
+ create mode 100644 drivers/media/usb/uvc/uvc_h264.h
+
+diff --git a/drivers/media/usb/uvc/Makefile b/drivers/media/usb/uvc/Makefile
+index 4f9eee4f8..f98e15455 100644
+--- a/drivers/media/usb/uvc/Makefile
++++ b/drivers/media/usb/uvc/Makefile
+@@ -1,5 +1,5 @@
+ # SPDX-License-Identifier: GPL-2.0
+-uvcvideo-objs  := uvc_driver.o uvc_queue.o uvc_v4l2.o uvc_video.o uvc_ctrl.o \
++uvcvideo-objs  := uvc_driver.o uvc_h264.o uvc_queue.o uvc_v4l2.o uvc_video.o uvc_ctrl.o \
+ 		  uvc_status.o uvc_isight.o uvc_debugfs.o uvc_metadata.o
+ ifeq ($(CONFIG_MEDIA_CONTROLLER),y)
+ uvcvideo-objs  += uvc_entity.o
+diff --git a/drivers/media/usb/uvc/uvc_driver.c b/drivers/media/usb/uvc/uvc_driver.c
+index f2e47b04d..25bcba6f3 100644
+--- a/drivers/media/usb/uvc/uvc_driver.c
++++ b/drivers/media/usb/uvc/uvc_driver.c
+@@ -25,9 +25,14 @@
+ #include <media/v4l2-ioctl.h>
+ 
+ #include "uvcvideo.h"
++#include "uvc_h264.h"
+ 
+ #define DRIVER_DESC		"USB Video Class driver"
+ 
++/* USB Video Payload H.264 1.5 descriptor subtypes. */
++#define UVC_VS_FORMAT_H264		0x13
++#define UVC_VS_FRAME_H264		0x14
++
+ unsigned int uvc_clock_param = CLOCK_MONOTONIC;
+ unsigned int uvc_hw_timestamps_param;
+ unsigned int uvc_no_drop_param = 1;
+@@ -329,6 +334,55 @@ static int uvc_parse_frame(struct uvc_device *dev,
+ 	return buffer[0];
+ }
+ 
++static int uvc_parse_frame_h264(struct uvc_device *dev,
++				struct uvc_streaming *streaming,
++				struct uvc_frame *frame, u32 **intervals,
++				const unsigned char *buffer, int buflen)
++{
++	struct usb_host_interface *alts = streaming->intf->cur_altsetting;
++	struct uvc_h264_frame_descriptor descriptor;
++	unsigned int i;
++
++	if (uvc_h264_parse_frame_descriptor(buffer, buflen, &descriptor)) {
++		uvc_dbg(dev, DESCR,
++			"device %d videostreaming interface %d H264 FRAME error\n",
++			dev->udev->devnum, alts->desc.bInterfaceNumber);
++		return -EINVAL;
++	}
++
++	frame->bFrameIndex = descriptor.index;
++	frame->bmCapabilities = descriptor.capabilities;
++	frame->wWidth = descriptor.width;
++	frame->wHeight = descriptor.height;
++	frame->dwMinBitRate = descriptor.min_bit_rate;
++	frame->dwMaxBitRate = descriptor.max_bit_rate;
++	frame->dwMaxVideoFrameBufferSize = descriptor.frame_size;
++	frame->dwDefaultFrameInterval = descriptor.default_interval;
++	frame->bFrameIntervalType = descriptor.interval_count;
++	frame->dwFrameInterval = *intervals;
++
++	for (i = 0; i < descriptor.interval_count; ++i)
++		(*intervals)[i] = descriptor.intervals[i];
++
++	frame->dwDefaultFrameInterval =
++		clamp(frame->dwDefaultFrameInterval,
++		      frame->dwFrameInterval[0],
++		      frame->dwFrameInterval[descriptor.interval_count - 1]);
++
++	if (dev->quirks & UVC_QUIRK_RESTRICT_FRAME_RATE) {
++		frame->bFrameIntervalType = 1;
++		(*intervals)[0] = frame->dwDefaultFrameInterval;
++	}
++
++	uvc_dbg(dev, DESCR, "- H264 %ux%u (%u.%u fps)\n",
++		frame->wWidth, frame->wHeight,
++		10000000 / frame->dwDefaultFrameInterval,
++		(100000000 / frame->dwDefaultFrameInterval) % 10);
++
++	*intervals += descriptor.interval_count;
++	return descriptor.length;
++}
++
+ static int uvc_parse_format(struct uvc_device *dev,
+ 	struct uvc_streaming *streaming, struct uvc_format *format,
+ 	struct uvc_frame *frames, u32 **intervals, const unsigned char *buffer,
+@@ -430,6 +484,21 @@ static int uvc_parse_format(struct uvc_device *dev,
+ 		ftype = UVC_VS_FRAME_MJPEG;
+ 		break;
+ 
++	case UVC_VS_FORMAT_H264:
++		if (buflen < 52 || buffer[0] < 52 || buffer[0] > buflen) {
++			uvc_dbg(dev, DESCR,
++				"device %d videostreaming interface %d H264 FORMAT error\n",
++				dev->udev->devnum,
++				alts->desc.bInterfaceNumber);
++			return -EINVAL;
++		}
++
++		format->fcc = V4L2_PIX_FMT_H264;
++		format->flags = UVC_FMT_FLAG_COMPRESSED;
++		format->bpp = 0;
++		ftype = UVC_VS_FRAME_H264;
++		break;
++
+ 	case UVC_VS_FORMAT_DV:
+ 		if (buflen < 9) {
+ 			uvc_dbg(dev, DESCR,
+@@ -486,9 +555,14 @@ static int uvc_parse_format(struct uvc_device *dev,
+ 		while (buflen > 2 && buffer[1] == USB_DT_CS_INTERFACE &&
+ 		       buffer[2] == ftype) {
+ 			frame = &frames[format->nframes];
+-			ret = uvc_parse_frame(dev, streaming, format, frame,
+-					      intervals, ftype, width_multiplier,
+-					      buffer, buflen);
++			if (ftype == UVC_VS_FRAME_H264)
++				ret = uvc_parse_frame_h264(dev, streaming, frame,
++							   intervals, buffer, buflen);
++			else
++				ret = uvc_parse_frame(dev, streaming, format, frame,
++						      intervals, ftype,
++						      width_multiplier,
++						      buffer, buflen);
+ 			if (ret < 0)
+ 				return ret;
+ 			format->nframes++;
+@@ -656,10 +730,19 @@ static int uvc_parse_streaming(struct uvc_device *dev,
+ 
+ 	/* Count the format and frame descriptors. */
+ 	while (_buflen > 2 && _buffer[1] == USB_DT_CS_INTERFACE) {
++		if (_buffer[0] < 3 || _buffer[0] > _buflen) {
++			uvc_dbg(dev, DESCR,
++				"device %d videostreaming interface %d descriptor length is invalid\n",
++				dev->udev->devnum,
++				alts->desc.bInterfaceNumber);
++			goto error;
++		}
++
+ 		switch (_buffer[2]) {
+ 		case UVC_VS_FORMAT_UNCOMPRESSED:
+ 		case UVC_VS_FORMAT_MJPEG:
+ 		case UVC_VS_FORMAT_FRAME_BASED:
++		case UVC_VS_FORMAT_H264:
+ 			nformats++;
+ 			break;
+ 
+@@ -693,6 +776,19 @@ static int uvc_parse_streaming(struct uvc_device *dev,
+ 			if (_buflen > 21)
+ 				nintervals += _buffer[21] ? _buffer[21] : 3;
+ 			break;
++
++		case UVC_VS_FRAME_H264:
++			n = _buffer[0] >= 44 ? _buffer[43] : 0;
++			if (!n || _buffer[0] < 44 + 4 * n) {
++				uvc_dbg(dev, DESCR,
++					"device %d videostreaming interface %d H264 FRAME error\n",
++					dev->udev->devnum,
++					alts->desc.bInterfaceNumber);
++				goto error;
++			}
++			nframes++;
++			nintervals += n;
++			break;
+ 		}
+ 
+ 		_buflen -= _buffer[0];
+@@ -737,6 +833,7 @@ static int uvc_parse_streaming(struct uvc_device *dev,
+ 		case UVC_VS_FORMAT_MJPEG:
+ 		case UVC_VS_FORMAT_DV:
+ 		case UVC_VS_FORMAT_FRAME_BASED:
++		case UVC_VS_FORMAT_H264:
+ 			ret = uvc_parse_format(dev, streaming, format, frame,
+ 				&interval, buffer, buflen);
+ 			if (ret < 0)
+@@ -3310,4 +3407,3 @@ module_exit(uvc_cleanup);
+ MODULE_DESCRIPTION(DRIVER_DESC);
+ MODULE_LICENSE("GPL");
+ MODULE_VERSION(DRIVER_VERSION);
+-
+diff --git a/drivers/media/usb/uvc/uvc_h264.c b/drivers/media/usb/uvc/uvc_h264.c
+new file mode 100644
+index 000000000..7ea490b66
+--- /dev/null
++++ b/drivers/media/usb/uvc/uvc_h264.c
+@@ -0,0 +1,65 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++#ifdef __KERNEL__
++#include <linux/errno.h>
++#else
++#include <errno.h>
++#endif
++
++#include "uvc_h264.h"
++
++static unsigned int read_le16(const unsigned char *input)
++{
++	return input[0] | (unsigned int)input[1] << 8;
++}
++
++static unsigned int read_le32(const unsigned char *input)
++{
++	return input[0] | (unsigned int)input[1] << 8 |
++	       (unsigned int)input[2] << 16 | (unsigned int)input[3] << 24;
++}
++
++int uvc_h264_parse_frame_descriptor(
++	const unsigned char *buffer, int buffer_length,
++	struct uvc_h264_frame_descriptor *descriptor)
++{
++	struct uvc_h264_frame_descriptor parsed = { 0 };
++	unsigned int pixels;
++	unsigned int required_length;
++	unsigned int i;
++
++	if (!buffer || !descriptor || buffer_length < 44)
++		return -EINVAL;
++
++	parsed.length = buffer[0];
++	parsed.interval_count = buffer[43];
++	required_length = 44 + 4 * parsed.interval_count;
++	if (!parsed.interval_count ||
++	    parsed.interval_count > UVC_H264_MAX_INTERVALS ||
++	    parsed.length < required_length ||
++	    parsed.length > (unsigned int)buffer_length)
++		return -EINVAL;
++
++	parsed.width = read_le16(&buffer[4]);
++	parsed.height = read_le16(&buffer[6]);
++	if (!parsed.width || !parsed.height ||
++	    parsed.width > ~0U / parsed.height)
++		return -EINVAL;
++	pixels = parsed.width * parsed.height;
++	if (pixels > ~0U / 2)
++		return -EINVAL;
++
++	parsed.index = buffer[3];
++	parsed.capabilities = read_le16(&buffer[21]);
++	parsed.min_bit_rate = read_le32(&buffer[31]);
++	parsed.max_bit_rate = read_le32(&buffer[35]);
++	parsed.frame_size = pixels * 2;
++	parsed.default_interval = read_le32(&buffer[39]);
++	for (i = 0; i < parsed.interval_count; ++i) {
++		unsigned int interval = read_le32(&buffer[44 + 4 * i]);
++
++		parsed.intervals[i] = interval ? interval : 1;
++	}
++
++	*descriptor = parsed;
++	return 0;
++}
+diff --git a/drivers/media/usb/uvc/uvc_h264.h b/drivers/media/usb/uvc/uvc_h264.h
+new file mode 100644
+index 000000000..6cb43315a
+--- /dev/null
++++ b/drivers/media/usb/uvc/uvc_h264.h
+@@ -0,0 +1,25 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++#ifndef UVC_H264_H
++#define UVC_H264_H
++
++#define UVC_H264_MAX_INTERVALS 52
++
++struct uvc_h264_frame_descriptor {
++	unsigned int length;
++	unsigned int index;
++	unsigned int capabilities;
++	unsigned int width;
++	unsigned int height;
++	unsigned int min_bit_rate;
++	unsigned int max_bit_rate;
++	unsigned int frame_size;
++	unsigned int default_interval;
++	unsigned int interval_count;
++	unsigned int intervals[UVC_H264_MAX_INTERVALS];
++};
++
++int uvc_h264_parse_frame_descriptor(
++	const unsigned char *buffer, int buffer_length,
++	struct uvc_h264_frame_descriptor *descriptor);
++
++#endif
+-- 
+2.55.0

@@ -1,0 +1,27 @@
+[package]
+name = "t1-touchbar"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[features]
+provider-test-fixture = []
+
+[[bin]]
+name = "t1-desktop-provider-fixture"
+path = "tests/support/desktop_provider_fixture.rs"
+required-features = ["provider-test-fixture"]
+
+[[test]]
+name = "desktop_provider"
+path = "tests/desktop_provider.rs"
+required-features = ["provider-test-fixture"]
+
+[dependencies]
+t1-platform = { path = "../t1-platform", version = "=0.0.0", default-features = false, features = ["frame-memfd", "seqpacket"] }
+t1-touchbar-hw = { path = "../t1-touchbar-hw", version = "=0.0.0", default-features = false }
+
+[lints]
+workspace = true

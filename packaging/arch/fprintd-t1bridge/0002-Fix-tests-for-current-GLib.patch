@@ -1,0 +1,35 @@
+diff --git a/tests/fprintd.py b/tests/fprintd.py
+index a1fef1c..8d8fe6e 100644
+--- a/tests/fprintd.py
++++ b/tests/fprintd.py
+@@ -592,10 +592,10 @@ class FPrintdTest(dbusmock.DBusTestCase):
+             proc = self.gdbus_device_method_call_process(method, args)
+             proc.wait(timeout=5)
+             if proc.returncode != 0:
+-                raise GLib.GError(proc.stdout.read())
++                raise GLib.GError(proc.stdout.read().decode())
+             return proc.stdout.read()
+         except subprocess.TimeoutExpired as e:
+-            raise GLib.GError(e.output)
++            raise GLib.GError(e.output.decode())
+ 
+ 
+ class FPrintdVirtualImageDeviceBaseTests(FPrintdTest):
+@@ -2990,7 +2990,7 @@ class FPrindConcurrentPolkitRequestsTest(FPrintdVirtualStorageDeviceBaseTest):
+ 
+         gdbus.wait()
+         with self.assertFprintError('AlreadyInUse'):
+-            raise GLib.GError(gdbus.stdout.read())
++            raise GLib.GError(gdbus.stdout.read().decode())
+ 
+         self.device.Release()
+ 
+@@ -3032,7 +3032,7 @@ class FPrindConcurrentPolkitRequestsTest(FPrintdVirtualStorageDeviceBaseTest):
+ 
+         gdbus.wait()
+         with self.assertFprintError('AlreadyInUse'):
+-            raise GLib.GError(gdbus.stdout.read())
++            raise GLib.GError(gdbus.stdout.read().decode())
+ 
+         self.device.Release()
+ 

@@ -1,0 +1,138 @@
+From cad85b51ceca1f29acfcb566d0fc9e05964ec9fe Mon Sep 17 00:00:00 2001
+From: Andrew Boyd <andrew@formkit.com>
+Date: Wed, 26 Aug 2026 23:23:46 -0400
+Subject: [PATCH 1/2] drm/tiny: appletbdrm: add Apple T1 display support
+
+The Apple T1 iBridge exposes its Audio Video display interface with
+product ID 0x8600, but differs from the T2 path in response ordering
+and framebuffer completion timestamps.
+
+Match the T1 display interface, clear stale bulk endpoint halts during
+probe, bound response draining until the requested message arrives, and
+accept T1 completions without applying the T2 timestamp check.
+---
+ drivers/gpu/drm/tiny/appletbdrm.c | 71 ++++++++++++++++---------------
+ 1 file changed, 36 insertions(+), 35 deletions(-)
+
+diff --git a/drivers/gpu/drm/tiny/appletbdrm.c b/drivers/gpu/drm/tiny/appletbdrm.c
+index 278bb23fe..61e7b28b7 100644
+--- a/drivers/gpu/drm/tiny/appletbdrm.c
++++ b/drivers/gpu/drm/tiny/appletbdrm.c
+@@ -43,6 +43,8 @@
+ #define APPLETBDRM_MSG_SIGNAL_READINESS	cpu_to_le32(0x52454459) /* REDY */
+ 
+ #define APPLETBDRM_BULK_MSG_TIMEOUT	1000
++#define APPLETBDRM_T1_PRODUCT_ID		0x8600
++#define APPLETBDRM_T1_RESPONSE_ATTEMPTS	8
+ 
+ #define drm_to_adev(_drm)		container_of(_drm, struct appletbdrm_device, drm)
+ #define adev_to_udev(adev)		interface_to_usbdev(to_usb_interface((adev)->drm.dev))
+@@ -137,6 +139,12 @@ struct appletbdrm_device {
+ 	struct drm_encoder encoder;
+ };
+ 
++static bool appletbdrm_is_t1(struct appletbdrm_device *adev)
++{
++	return le16_to_cpu(adev_to_udev(adev)->descriptor.idProduct) ==
++	       APPLETBDRM_T1_PRODUCT_ID;
++}
++
+ struct appletbdrm_plane_state {
+ 	struct drm_shadow_plane_state base;
+ 	struct appletbdrm_fb_request *request;
+@@ -179,45 +187,28 @@ static int appletbdrm_read_response(struct appletbdrm_device *adev,
+ {
+ 	struct usb_device *udev = adev_to_udev(adev);
+ 	struct drm_device *drm = &adev->drm;
+-	int ret, actual_size;
+-	bool readiness_signal_received = false;
++	int ret, actual_size, attempt;
+ 
+-retry:
+-	ret = usb_bulk_msg(udev, usb_rcvbulkpipe(udev, adev->in_ep),
+-			   response, size, &actual_size, APPLETBDRM_BULK_MSG_TIMEOUT);
+-	if (ret) {
+-		drm_err(drm, "Failed to read response (%d)\n", ret);
+-		return ret;
+-	}
+-
+-	/*
+-	 * The device responds to the first request sent in a particular
+-	 * timeframe after the USB device configuration is set with a readiness
+-	 * signal, in which case the response should be read again
+-	 */
+-	if (response->msg == APPLETBDRM_MSG_SIGNAL_READINESS) {
+-		if (!readiness_signal_received) {
+-			readiness_signal_received = true;
+-			goto retry;
++	for (attempt = 0; attempt < APPLETBDRM_T1_RESPONSE_ATTEMPTS; attempt++) {
++		ret = usb_bulk_msg(udev, usb_rcvbulkpipe(udev, adev->in_ep),
++				   response, size, &actual_size,
++				   APPLETBDRM_BULK_MSG_TIMEOUT);
++		if (ret) {
++			drm_err(drm, "Failed to read response (%d)\n", ret);
++			return ret;
+ 		}
+ 
+-		drm_err(drm, "Encountered unexpected readiness signal\n");
+-		return -EINTR;
++		if (actual_size == size && response->msg == expected_response)
++			return 0;
++
++		if (!appletbdrm_is_t1(adev) &&
++		    (actual_size < sizeof(*response) ||
++		     response->msg != APPLETBDRM_MSG_SIGNAL_READINESS))
++			break;
+ 	}
+ 
+-	if (actual_size != size) {
+-		drm_err(drm, "Actual size (%d) doesn't match expected size (%zu)\n",
+-			actual_size, size);
+-		return -EBADMSG;
+-	}
+-
+-	if (response->msg != expected_response) {
+-		drm_err(drm, "Unexpected response from device (expected %p4cl found %p4cl)\n",
+-			&expected_response, &response->msg);
+-		return -EIO;
+-	}
+-
+-	return 0;
++	drm_err(drm, "No valid response after %d read attempts\n", attempt);
++	return -EBADMSG;
+ }
+ 
+ static int appletbdrm_send_msg(struct appletbdrm_device *adev, __le32 msg)
+@@ -455,7 +446,8 @@ static int appletbdrm_flush_damage(struct appletbdrm_device *adev,
+ 	if (ret)
+ 		goto end_fb_cpu_access;
+ 
+-	if (response->timestamp != footer->timestamp) {
++	if (!appletbdrm_is_t1(adev) &&
++	    response->timestamp != footer->timestamp) {
+ 		drm_err(drm, "Response timestamp (%llu) doesn't match request timestamp (%llu)\n",
+ 			le64_to_cpu(response->timestamp), timestamp);
+ 		goto end_fb_cpu_access;
+@@ -761,6 +753,13 @@ static int appletbdrm_probe(struct usb_interface *intf,
+ 		drm_warn(drm, "buffer sharing not supported"); /* not an error */
+ 	}
+ 
++	if (appletbdrm_is_t1(adev)) {
++		usb_clear_halt(adev_to_udev(adev),
++			       usb_sndbulkpipe(adev_to_udev(adev), adev->out_ep));
++		usb_clear_halt(adev_to_udev(adev),
++			       usb_rcvbulkpipe(adev_to_udev(adev), adev->in_ep));
++	}
++
+ 	ret = appletbdrm_get_information(adev);
+ 	if (ret) {
+ 		drm_err(drm, "Failed to get display information\n");
+@@ -816,6 +815,8 @@ static void appletbdrm_shutdown(struct usb_interface *intf)
+ 
+ static const struct usb_device_id appletbdrm_usb_id_table[] = {
+ 	{ USB_DEVICE_INTERFACE_CLASS(0x05ac, 0x8302, USB_CLASS_AUDIO_VIDEO) },
++	{ USB_DEVICE_INTERFACE_CLASS(0x05ac, APPLETBDRM_T1_PRODUCT_ID,
++				     USB_CLASS_AUDIO_VIDEO) },
+ 	{}
+ };
+ MODULE_DEVICE_TABLE(usb, appletbdrm_usb_id_table);

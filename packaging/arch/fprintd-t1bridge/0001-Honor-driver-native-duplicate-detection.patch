@@ -1,0 +1,86 @@
+diff --git a/src/device.c b/src/device.c
+index 4de4a10..53faff7 100644
+--- a/src/device.c
++++ b/src/device.c
+@@ -317,8 +317,9 @@ on_nr_enroll_stages_changed (FprintDevice *rdev,
+ 
+   nr_enroll_stages = fp_device_get_nr_enroll_stages (device);
+ 
+-  /* One extra step for our internal identification. */
+-  if (fp_device_has_feature (device, FP_DEVICE_FEATURE_IDENTIFY))
++  /* One extra step only when fprintd performs its own identification. */
++  if (fp_device_has_feature (device, FP_DEVICE_FEATURE_IDENTIFY) &&
++      !fp_device_has_feature (device, FP_DEVICE_FEATURE_DUPLICATES_CHECK))
+     nr_enroll_stages += 1;
+ 
+   g_debug ("Device %s enroll stages changed to %d",
+@@ -2236,7 +2237,8 @@ fprint_device_enroll_start (FprintDBusDevice      *dbus_dev,
+                    clear_err->message);
+     }
+ 
+-  if (fp_device_has_feature (priv->dev, FP_DEVICE_FEATURE_IDENTIFY))
++  if (fp_device_has_feature (priv->dev, FP_DEVICE_FEATURE_IDENTIFY) &&
++      !fp_device_has_feature (priv->dev, FP_DEVICE_FEATURE_DUPLICATES_CHECK))
+     {
+       g_autoptr(GPtrArray) all_prints = load_all_prints (rdev);
+ 
+@@ -2261,9 +2263,10 @@ fprint_device_enroll_start (FprintDBusDevice      *dbus_dev,
+       /* We may still want to try to use verification to check for duplicates
+        * if only one fingerprint was previously enrolled, or add more verify
+        * stages up to a predefined limit */
+-      g_warning ("Device %s does not support duplicate identification and so "
+-                 "fprintd duplicate detection won't work",
+-                 fp_device_get_name (priv->dev));
++      if (!fp_device_has_feature (priv->dev, FP_DEVICE_FEATURE_DUPLICATES_CHECK))
++        g_warning ("Device %s does not support duplicate identification and so "
++                   "fprintd duplicate detection won't work",
++                   fp_device_get_name (priv->dev));
+       enroll_start (rdev);
+     }
+ 
+diff --git a/tests/fprintd.py b/tests/fprintd.py
+index a1fef1c..15b9daa 100644
+--- a/tests/fprintd.py
++++ b/tests/fprintd.py
+@@ -603,6 +603,7 @@ class FPrintdVirtualImageDeviceBaseTests(FprintdTest):
+     device_driver = 'virtual_image'
+     driver_name = 'Virtual image device for debugging'
+     has_identification = True
++    has_native_duplicate_detection = False
+ 
+ class FPrintdVirtualDeviceBaseTest(FPrintdVirtualImageDeviceBaseTests):
+ 
+@@ -900,6 +901,7 @@ class FPrintdVirtualStorageDeviceBaseTest(FPrintdVirtualDeviceBaseTest):
+     device_driver = 'virtual_device_storage'
+     driver_name = 'Virtual device with storage and identification for debugging'
+     enroll_stages = 2
++    has_native_duplicate_detection = True
+ 
+     def _send_command(self, con, command, *args):
+         params = ' '.join(str(p) for p in args)
+@@ -962,11 +964,13 @@ class FPrintdVirtualStorageDeviceBaseTest(FPrintdVirtualDeviceBaseTest):
+     def _maybe_reduce_enroll_stages(self, stages=-1):
+         # Reduce the number of default enroll stages, we can go a bit faster
+         stages = stages if stages > 0 else self.enroll_stages
+-        if self.has_identification:
++        if self.has_identification and not self.has_native_duplicate_detection:
+             stages += 1 # Adding the extra stage for duplicates-check
+         if self.num_enroll_stages == stages:
+             return
+-        device_stages = stages -1 if self.has_identification else stages
++        device_stages = stages
++        if self.has_identification and not self.has_native_duplicate_detection:
++            device_stages -= 1
+         self.send_command('SET_ENROLL_STAGES', device_stages)
+         while self.num_enroll_stages != stages:
+             ctx.iteration(True)
+@@ -987,6 +991,9 @@ class FPrintdVirtualStorageDeviceTests(FPrintdVirtualStorageDeviceBaseTest):
+         self.try_release()
+         super().tearDown()
+ 
++    def test_native_duplicate_detection_uses_device_stage_count(self):
++        self.assertEqual(self.num_enroll_stages, self.enroll_stages)
++
+     def test_garbage_collect(self):
+         # We expect collection in this order
+         garbage_collect = [

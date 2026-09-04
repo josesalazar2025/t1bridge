@@ -1,0 +1,5 @@
+/*.tar.*
+/*.pkg.tar.*
+/build*/
+/pkg/
+/src/
