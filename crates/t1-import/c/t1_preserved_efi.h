@@ -21,4 +21,8 @@ enum t1_preserved_efi_status {
 int t1_preserved_efi_open_fdr(int root_descriptor, int *source_descriptor,
 	uint64_t *source_size);
 
+/* Read a regular FDR backup or fixed descendant of an absolute EFI root. */
+int t1_preserved_efi_open_backup(const char *path, int *source_descriptor,
+	uint64_t *source_size);
+
 #endif

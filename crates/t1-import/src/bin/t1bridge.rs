@@ -1,11 +1,14 @@
 use std::ffi::{OsStr, OsString};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use t1_daemons::auth_client::{TouchIdClientError, TouchIdCommand};
 use t1_import::automatic::{AutomaticImportError, SourceError};
 use t1_import::commit::CommitError;
 use t1_import::fdr::MatchingRecordSelectionError;
-use t1_import::runtime::{ProtectedImportError, attempt_protected_import};
+use t1_import::runtime::{
+    ProtectedImportError, attempt_protected_import, attempt_protected_import_from_backup,
+};
 use t1_import::status::{StatusError, inspect};
 use t1_platform::preserved_efi_discovery;
 
@@ -28,9 +31,10 @@ enum ExitCategory {
     UsbCycleFailed = 31,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum Command {
     AutomaticImport,
+    BackupImport(PathBuf),
     Enroll,
     Match,
     Status,
@@ -47,13 +51,13 @@ impl From<ExitCategory> for ExitCode {
 fn main() -> ExitCode {
     let Some(command) = parse_command(std::env::args_os()) else {
         eprintln!(
-            "usage: t1bridge machine-data import | enroll | match | status | validate usb-cycle | validate usb-live-loss"
+            "usage: t1bridge machine-data import [--from ABSOLUTE_PATH] | enroll | match | status | validate usb-cycle | validate usb-live-loss"
         );
         return ExitCategory::Usage.into();
     };
     let is_root = preserved_efi_discovery::is_root();
-    if !authority_allows(command, is_root) {
-        eprintln!("t1bridge: {}", authority_error(command));
+    if !authority_allows(&command, is_root) {
+        eprintln!("t1bridge: {}", authority_error(&command));
         return ExitCategory::Permission.into();
     }
     match run(command) {
@@ -92,6 +96,17 @@ where
     let mut arguments = arguments.into_iter();
     let _program = arguments.next();
     match (arguments.next(), arguments.next(), arguments.next()) {
+        (Some(group), Some(command), Some(option))
+            if group == OsStr::new("machine-data")
+                && command == OsStr::new("import")
+                && option == OsStr::new("--from") =>
+        {
+            let path = PathBuf::from(arguments.next()?);
+            if !path.is_absolute() || arguments.next().is_some() {
+                return None;
+            }
+            Some(Command::BackupImport(path))
+        }
         (Some(group), Some(command), None)
             if group == OsStr::new("machine-data") && command == OsStr::new("import") =>
         {
@@ -119,6 +134,9 @@ fn run(command: Command) -> Result<(), CommandError> {
         Command::AutomaticImport => attempt_protected_import()
             .map(|_| ())
             .map_err(CommandError::Import),
+        Command::BackupImport(path) => attempt_protected_import_from_backup(&path)
+            .map(|_| ())
+            .map_err(CommandError::Import),
         Command::Enroll => {
             t1_daemons::auth_client::run(TouchIdCommand::Enroll).map_err(CommandError::TouchId)
         }
@@ -136,18 +154,22 @@ fn run(command: Command) -> Result<(), CommandError> {
     }
 }
 
-const fn authority_allows(command: Command, is_root: bool) -> bool {
+const fn authority_allows(command: &Command, is_root: bool) -> bool {
     match command {
-        Command::AutomaticImport | Command::Status | Command::UsbCycle | Command::UsbLiveLoss => {
-            is_root
-        }
+        Command::AutomaticImport
+        | Command::BackupImport(_)
+        | Command::Status
+        | Command::UsbCycle
+        | Command::UsbLiveLoss => is_root,
         Command::Enroll | Command::Match => !is_root,
     }
 }
 
-const fn authority_error(command: Command) -> &'static str {
+const fn authority_error(command: &Command) -> &'static str {
     match command {
-        Command::AutomaticImport => "machine-data import requires root authority",
+        Command::AutomaticImport | Command::BackupImport(_) => {
+            "machine-data import requires root authority"
+        }
         Command::Enroll => "enrollment requires a non-root user",
         Command::Match => "matching requires a non-root user",
         Command::Status => "status requires root authority",
@@ -242,14 +264,46 @@ mod tests {
     fn command_authority_matches_the_product_boundary() {
         for (command, root_allowed, user_allowed) in [
             (Command::AutomaticImport, true, false),
+            (
+                Command::BackupImport(PathBuf::from("/synthetic/backup")),
+                true,
+                false,
+            ),
             (Command::Enroll, false, true),
             (Command::Match, false, true),
             (Command::Status, true, false),
             (Command::UsbCycle, true, false),
             (Command::UsbLiveLoss, true, false),
         ] {
-            assert_eq!(authority_allows(command, true), root_allowed);
-            assert_eq!(authority_allows(command, false), user_allowed);
+            assert_eq!(authority_allows(&command, true), root_allowed);
+            assert_eq!(authority_allows(&command, false), user_allowed);
+        }
+    }
+
+    #[test]
+    fn backup_requires_one_explicit_absolute_source_without_identity_arguments() {
+        assert_eq!(
+            parse_command(arguments(&[
+                "t1bridge",
+                "machine-data",
+                "import",
+                "--from",
+                "/synthetic/EFI backup",
+            ])),
+            Some(Command::BackupImport(PathBuf::from(
+                "/synthetic/EFI backup"
+            )))
+        );
+        for tail in [
+            vec!["--from"],
+            vec!["--from", ""],
+            vec!["--from", "relative"],
+            vec!["--from", "/synthetic", "extra"],
+            vec!["--from", "/synthetic", "--association", "synthetic"],
+        ] {
+            let mut args = vec!["t1bridge", "machine-data", "import"];
+            args.extend(tail);
+            assert_eq!(parse_command(arguments(&args)), None);
         }
     }
 

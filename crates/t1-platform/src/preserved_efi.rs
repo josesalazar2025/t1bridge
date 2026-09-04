@@ -81,6 +81,22 @@ pub fn open_fdr(root: BorrowedFd<'_>) -> Result<OpenedPreservedFdr, Error> {
     Ok(OpenedPreservedFdr { descriptor, size })
 }
 
+/// Opens a regular FDR backup or the fixed FDR descendant of an EFI directory.
+///
+/// # Errors
+/// Rejects relative paths, symlink components, special files, and empty data.
+/// Diagnostics never include the supplied path.
+pub fn open_backup(path: &std::path::Path) -> Result<OpenedPreservedFdr, Error> {
+    use std::os::unix::ffi::OsStrExt;
+
+    let path =
+        std::ffi::CString::new(path.as_os_str().as_bytes()).map_err(|_| Error::InvalidArgument)?;
+    let (status, opened) = ffi::open_preserved_backup(&path);
+    check(status)?;
+    let (descriptor, size) = opened.ok_or(Error::InspectionFailed)?;
+    Ok(OpenedPreservedFdr { descriptor, size })
+}
+
 fn check(status: i32) -> Result<(), Error> {
     match status {
         0 => Ok(()),

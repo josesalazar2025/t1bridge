@@ -3,6 +3,7 @@
 
 use std::fmt;
 use std::os::fd::OwnedFd;
+use std::path::Path;
 
 use crate::automatic::{
     AutomaticImportError, DirectMatchingRecordSource, LiveAssociationSource,
@@ -10,7 +11,7 @@ use crate::automatic::{
 };
 use crate::commit::{CommitOutcome, ImportCommitStorage};
 use crate::preserved::{
-    EnumeratedPreservedRecordReader, FilesystemPreservedSourceEnumeration,
+    BackupSourceEnumeration, EnumeratedPreservedRecordReader, FilesystemPreservedSourceEnumeration,
     SystemPreservedSourceEnumeration,
 };
 use crate::session::LiveT1AssociationSource;
@@ -83,6 +84,33 @@ pub fn attempt_protected_import() -> Result<CommitOutcome, ProtectedImportError>
     let preserved = EnumeratedPreservedRecordReader::new(SystemPreservedSourceEnumeration::new());
     let mut source = DirectMatchingRecordSource::new(LiveT1AssociationSource, preserved);
     attempt_automatic_import(&mut source, &mut storage).map_err(ProtectedImportError::Import)
+}
+
+/// Imports a user-selected EFI directory or direct FDR backup into fixed storage.
+///
+/// # Errors
+/// Returns redacted failures without changing an invalid existing destination.
+pub fn attempt_protected_import_from_backup(
+    path: &Path,
+) -> Result<CommitOutcome, ProtectedImportError> {
+    let storage =
+        MachineDataStorage::open().map_err(|_| ProtectedImportError::StorageUnavailable)?;
+    attempt_import_from_backup(LiveT1AssociationSource, storage, path)
+        .map_err(ProtectedImportError::Import)
+}
+
+/// Composes the same live-match and commit policy with one backup source.
+///
+/// # Errors
+/// Rejects unavailable, unsafe, malformed, or nonmatching input before commit.
+pub fn attempt_import_from_backup<Live: LiveAssociationSource, Storage: ImportCommitStorage>(
+    live: Live,
+    mut storage: Storage,
+    path: &Path,
+) -> Result<CommitOutcome, AutomaticImportError> {
+    let preserved = EnumeratedPreservedRecordReader::new(BackupSourceEnumeration::new(path));
+    let mut source = DirectMatchingRecordSource::new(live, preserved);
+    attempt_automatic_import(&mut source, &mut storage)
 }
 
 /// Composes one live-association source and commit store with open ESP roots.
@@ -328,6 +356,97 @@ mod tests {
             AutomaticImportError::Source(SourceError::HardwareUnavailable)
         );
         assert_eq!(storage_calls.get(), 0);
+    }
+
+    #[test]
+    fn backup_file_and_directory_use_live_matching_and_protected_commit() {
+        let root = Root::with_fdr(&fdr_data(ASSOCIATION, 2));
+        for path in [
+            root.path.clone(),
+            root.path.join("EFI/APPLE/EMBEDDEDOS/FDRData"),
+        ] {
+            let calls = Rc::new(Cell::new(0));
+            let outcome = attempt_import_from_backup(
+                Live {
+                    association: Ok(*ASSOCIATION),
+                },
+                Storage::new(Rc::clone(&calls)),
+                &path,
+            )
+            .unwrap();
+            assert_eq!(outcome, CommitOutcome::Installed);
+            assert!(calls.get() > 0);
+        }
+    }
+
+    #[test]
+    fn invalid_or_foreign_backups_never_reach_storage() {
+        for (bytes, expected) in [
+            (
+                fdr_data(OTHER_ASSOCIATION, 1),
+                AutomaticImportError::Selection(
+                    crate::fdr::MatchingRecordSelectionError::NoMatchingRecord,
+                ),
+            ),
+            (
+                b"not a plist".to_vec(),
+                AutomaticImportError::Source(SourceError::AppleDataInvalid),
+            ),
+        ] {
+            let root = Root::with_fdr(&bytes);
+            let calls = Rc::new(Cell::new(0));
+            let error = attempt_import_from_backup(
+                Live {
+                    association: Ok(*ASSOCIATION),
+                },
+                Storage::new(Rc::clone(&calls)),
+                &root.path,
+            )
+            .unwrap_err();
+            assert_eq!(error, expected);
+            assert_eq!(calls.get(), 0);
+        }
+    }
+
+    #[test]
+    fn backup_cannot_replace_a_different_existing_calibration() {
+        let root = Root::with_fdr(&fdr_data(ASSOCIATION, 2));
+        let calls = Rc::new(Cell::new(0));
+        let storage = Storage {
+            record: Some(fdr_record(ASSOCIATION, 1)),
+            calls,
+        };
+        assert_eq!(
+            attempt_import_from_backup(
+                Live {
+                    association: Ok(*ASSOCIATION)
+                },
+                storage,
+                &root.path,
+            ),
+            Err(AutomaticImportError::Commit(
+                crate::commit::CommitError::InvalidDestination
+            ))
+        );
+    }
+
+    #[test]
+    fn unavailable_sensor_prevents_backup_opening() {
+        let root = Root::with_fdr(b"invalid");
+        let calls = Rc::new(Cell::new(0));
+        assert_eq!(
+            attempt_import_from_backup(
+                Live {
+                    association: Err(SourceError::HardwareUnavailable)
+                },
+                Storage::new(Rc::clone(&calls)),
+                &root.path.join("absent"),
+            ),
+            Err(AutomaticImportError::Source(
+                SourceError::HardwareUnavailable
+            ))
+        );
+        assert_eq!(calls.get(), 0);
     }
 
     fn fdr_data(association: &[u8; MODULE_SERIAL_NUMBER_SIZE], marker: u8) -> Vec<u8> {

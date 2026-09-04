@@ -1,6 +1,6 @@
 pkgname=t1bridge
 pkgver=0.1.0
-pkgrel=60
+pkgrel=61
 pkgdesc='Apple T1 iBridge userspace services'
 arch=('x86_64')
 url='https://github.com/andrew-boyd/t1bridge'
@@ -9,7 +9,7 @@ depends=('gcc-libs' 'glibc' 'systemd>=256')
 makedepends=('cargo' 'pkgconf' 'rust' 'xz')
 options=('!debug')
 source=("${pkgname}-${pkgver}.tar.gz")
-sha256sums=('8b2eadd798634320f754b8a9da2a8b7a562ab6e7d79e77112c816d33dc35e48a')
+sha256sums=('f448a8eb26736bd5c342494fe01ee9cc05e640080586c4113b44ce9a8ee80dd6')
 
 build() {
 	local source_root="${srcdir}/${pkgname}-${pkgver}"

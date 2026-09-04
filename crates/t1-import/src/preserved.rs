@@ -3,6 +3,7 @@
 use std::fs::File;
 use std::io::{Read, Seek};
 use std::os::fd::{AsFd, OwnedFd};
+use std::path::Path;
 
 use t1_bridge::calibration::MODULE_SERIAL_NUMBER_SIZE;
 use t1_platform::preserved_efi::{Error as PreservedEfiError, open_fdr};
@@ -39,6 +40,35 @@ pub trait PreservedSourceEnumeration {
     ///
     /// Returns only a redaction-safe source category.
     fn next_source(&mut self) -> Result<Option<PreservedFdrSource<Self::Reader>>, SourceError>;
+}
+
+/// Opens one explicitly selected backup only after the live session closes.
+pub struct BackupSourceEnumeration<'a> {
+    path: Option<&'a Path>,
+}
+
+impl<'a> BackupSourceEnumeration<'a> {
+    #[must_use]
+    pub const fn new(path: &'a Path) -> Self {
+        Self { path: Some(path) }
+    }
+}
+
+impl PreservedSourceEnumeration for BackupSourceEnumeration<'_> {
+    type Reader = File;
+
+    fn next_source(&mut self) -> Result<Option<PreservedFdrSource<File>>, SourceError> {
+        let Some(path) = self.path.take() else {
+            return Ok(None);
+        };
+        let opened =
+            t1_platform::preserved_efi::open_backup(path).map_err(map_preserved_efi_error)?;
+        let (descriptor, byte_len) = opened.into_parts();
+        Ok(Some(PreservedFdrSource::new(
+            File::from(descriptor),
+            byte_len,
+        )))
+    }
 }
 
 /// Opens the fixed `FDRData` descendant of caller-opened preserved ESP roots.

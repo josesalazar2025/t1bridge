@@ -74,9 +74,24 @@ them, matches data to the live sensor, and stores the selected record under
 root-only `/var/lib/t1bridge/machine-data/`. Missing or conflicting data is an
 error, not permission to choose an arbitrary partition.
 
-**Current limitation:** there is no CLI argument for importing an EFI backup
-file or a macOS installer archive. Do not copy guessed records into protected
-storage. That recovery entry point is not implemented by the shipped command.
+To use a backup instead, supply its absolute path:
+
+```sh
+sudo t1bridge machine-data import --from /path/to/efi-backup
+```
+
+The directory must contain `EFI/APPLE/EMBEDDEDOS/FDRData`. You can also pass the
+absolute path to that `FDRData` file directly. This works for a copied backup
+or a manually mounted preserved EFI filesystem. The source must originate
+from the target Mac; a different Mac's data is rejected by live-sensor matching.
+No symlink component or special file is accepted. The backup is read-only,
+diagnostics do not print its path or identifiers, and a different existing
+calibration record is never overwritten.
+
+Compressed backups and macOS installer/disk-image containers are not accepted
+by this command yet. Extract a backup you control first; do not copy guessed
+records into protected storage. A generic macOS installer is not guaranteed
+to contain your machine's calibration data.
 
 ## Enroll and verify
 

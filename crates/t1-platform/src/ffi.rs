@@ -272,6 +272,13 @@ unsafe extern "C" {
         source_size: *mut u64,
     ) -> c_int;
 
+    #[cfg(feature = "preserved-efi")]
+    fn t1_preserved_efi_open_backup(
+        path: *const std::ffi::c_char,
+        source_descriptor: *mut c_int,
+        source_size: *mut u64,
+    ) -> c_int;
+
     #[cfg(feature = "preserved-efi-discovery")]
     fn t1_efi_roots_discover(
         root_descriptors: *mut c_int,
@@ -1137,6 +1144,23 @@ pub(super) fn open_preserved_fdr(root: RawFd) -> (c_int, Option<(OwnedFd, u64)>)
     let opened = if status == 0 && source >= 0 {
         // SAFETY: the C contract returns a new owned descriptor only on
         // success; the explicit nonnegative check excludes sentinel values.
+        Some((unsafe { OwnedFd::from_raw_fd(source) }, size))
+    } else {
+        None
+    };
+    (status, opened)
+}
+
+#[cfg(feature = "preserved-efi")]
+pub(super) fn open_preserved_backup(path: &std::ffi::CStr) -> (c_int, Option<(OwnedFd, u64)>) {
+    let mut source = -1;
+    let mut size = 0;
+    // SAFETY: path is NUL-terminated and live throughout the call; writable
+    // outputs receive a newly owned descriptor only on success.
+    let status =
+        unsafe { t1_preserved_efi_open_backup(path.as_ptr(), &raw mut source, &raw mut size) };
+    let opened = if status == 0 && source >= 0 {
+        // SAFETY: success transfers this new descriptor exclusively to us.
         Some((unsafe { OwnedFd::from_raw_fd(source) }, size))
     } else {
         None

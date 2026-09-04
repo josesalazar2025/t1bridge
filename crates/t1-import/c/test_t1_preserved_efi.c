@@ -437,6 +437,86 @@ static void test_repeated_failure_does_not_leak_descriptors(void)
 	fixture_destroy(&fixture);
 }
 
+static void test_backup_paths_and_owned_descriptor(void)
+{
+	struct fixture fixture;
+	uint64_t size;
+	int descriptor;
+	uint8_t bytes[sizeof(record)];
+	char link_path[TEST_PATH_CAPACITY];
+	char linked_source[TEST_PATH_CAPACITY];
+
+	EXPECT_TRUE(fixture_init(&fixture));
+	EXPECT_TRUE(create_parents(&fixture, 3));
+	EXPECT_TRUE(create_source(&fixture, record, sizeof(record)));
+	const char *paths[] = {fixture.root, fixture.source};
+	int before = open_descriptor_count();
+	for (size_t index = 0; index < 2; ++index) {
+		EXPECT_STATUS(T1_PRESERVED_EFI_OK,
+			t1_preserved_efi_open_backup(paths[index], &descriptor, &size));
+		EXPECT_TRUE(size == sizeof(record));
+		EXPECT_TRUE((fcntl(descriptor, F_GETFD) & FD_CLOEXEC) != 0);
+		EXPECT_TRUE((fcntl(descriptor, F_GETFL) & O_ACCMODE) == O_RDONLY);
+		EXPECT_TRUE(read(descriptor, bytes, sizeof(bytes)) == sizeof(bytes));
+		EXPECT_TRUE(memcmp(bytes, record, sizeof(record)) == 0);
+		EXPECT_TRUE(close(descriptor) == 0);
+	}
+	EXPECT_TRUE(make_path(link_path, sizeof(link_path), fixture.root, "linked"));
+	EXPECT_TRUE(symlink(fixture.source, link_path) == 0);
+	EXPECT_STATUS(T1_PRESERVED_EFI_SOURCE_UNAVAILABLE,
+		t1_preserved_efi_open_backup(link_path, &descriptor, &size));
+	EXPECT_TRUE(descriptor == -1 && size == 0);
+	EXPECT_TRUE(unlink(link_path) == 0);
+	EXPECT_TRUE(symlink(fixture.components[2], link_path) == 0);
+	EXPECT_TRUE(make_path(linked_source, sizeof(linked_source), link_path, "FDRData"));
+	EXPECT_STATUS(T1_PRESERVED_EFI_SOURCE_UNAVAILABLE,
+		t1_preserved_efi_open_backup(linked_source, &descriptor, &size));
+	EXPECT_TRUE(unlink(link_path) == 0);
+	EXPECT_STATUS(T1_PRESERVED_EFI_OK,
+		t1_preserved_efi_open_backup(fixture.source, &descriptor, &size));
+	EXPECT_TRUE(unlink(fixture.source) == 0);
+	EXPECT_TRUE(create_source(&fixture, (const uint8_t *)"changed", 7));
+	EXPECT_TRUE(read(descriptor, bytes, sizeof(bytes)) == sizeof(bytes));
+	EXPECT_TRUE(memcmp(bytes, record, sizeof(record)) == 0);
+	EXPECT_TRUE(close(descriptor) == 0);
+	EXPECT_TRUE(open_descriptor_count() == before);
+	fixture_destroy(&fixture);
+}
+
+static void test_backup_rejects_special_empty_and_invalid_inputs(void)
+{
+	struct fixture fixture;
+	uint64_t size = 123;
+	int descriptor = 123;
+
+	EXPECT_TRUE(fixture_init(&fixture));
+	EXPECT_TRUE(create_parents(&fixture, 3));
+	EXPECT_STATUS(T1_PRESERVED_EFI_INVALID_ARGUMENT,
+		t1_preserved_efi_open_backup(NULL, &descriptor, &size));
+	EXPECT_TRUE(descriptor == -1 && size == 0);
+	EXPECT_STATUS(T1_PRESERVED_EFI_INVALID_ARGUMENT,
+		t1_preserved_efi_open_backup("relative", &descriptor, &size));
+	EXPECT_STATUS(T1_PRESERVED_EFI_INVALID_ARGUMENT,
+		t1_preserved_efi_open_backup(fixture.root, NULL, &size));
+	EXPECT_STATUS(T1_PRESERVED_EFI_INVALID_ARGUMENT,
+		t1_preserved_efi_open_backup(fixture.root, &descriptor, NULL));
+	EXPECT_STATUS(T1_PRESERVED_EFI_INVALID_SOURCE,
+		t1_preserved_efi_open_backup("/dev/null", &descriptor, &size));
+	EXPECT_TRUE(create_source(&fixture, record, 0));
+	EXPECT_STATUS(T1_PRESERVED_EFI_INVALID_SOURCE,
+		t1_preserved_efi_open_backup(fixture.source, &descriptor, &size));
+	EXPECT_TRUE(unlink(fixture.source) == 0);
+	EXPECT_TRUE(mkfifo(fixture.source, 0600) == 0);
+	int before = open_descriptor_count();
+	for (unsigned int index = 0; index < 64; ++index) {
+		EXPECT_STATUS(T1_PRESERVED_EFI_INVALID_SOURCE,
+			t1_preserved_efi_open_backup(fixture.source, &descriptor, &size));
+		EXPECT_TRUE(descriptor == -1 && size == 0);
+	}
+	EXPECT_TRUE(open_descriptor_count() == before);
+	fixture_destroy(&fixture);
+}
+
 int main(void)
 {
 	test_success_preserves_tree_and_transfers_source();
@@ -445,6 +525,8 @@ int main(void)
 	test_every_component_rejects_missing_links_and_files();
 	test_source_shape_and_availability();
 	test_repeated_failure_does_not_leak_descriptors();
+	test_backup_paths_and_owned_descriptor();
+	test_backup_rejects_special_empty_and_invalid_inputs();
 
 	if (failures != 0) {
 		fprintf(stderr, "%u preserved EFI test(s) failed\n", failures);
