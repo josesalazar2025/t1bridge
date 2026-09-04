@@ -18,6 +18,9 @@ MacBookPro14,2 is currently verified.
 The architecture, hardware acceptance runbook, and versioned interface
 contracts are in [`docs/`](docs/).
 
+Start with [How Touch ID works](docs/touch-id.md) for diagrams of startup,
+enrollment, cold-boot restore, and authentication.
+
 ## Package boundaries
 
 T1Bridge owns T1 hardware support, protected machine-data import and recovery,

@@ -1,5 +1,7 @@
 # Architecture
 
+For a visual walkthrough, see [How Touch ID works](touch-id.md).
+
 This document defines the v1 component boundaries, boot ordering, persistence
 model, and install layout. Hardware protocol details belong in `t1-bridge`;
 policy and desktop behavior do not.
