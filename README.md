@@ -12,7 +12,7 @@ interfaces may change until the first release.
 T1Bridge targets the four Touch Bar T1 models: MacBookPro13,2,
 MacBookPro13,3, MacBookPro14,2, and MacBookPro14,3. Current private hardware
 validation is on MacBookPro13,3. MacBookPro14,3 validation is deferred until
-that owned machine has Omarchy installed; neither MacBookPro13,2 nor
+that machine is ready for Linux testing; neither MacBookPro13,2 nor
 MacBookPro14,2 is currently verified.
 
 The architecture, hardware acceptance runbook, and versioned interface
@@ -21,19 +21,19 @@ contracts are in [`docs/`](docs/).
 Start with [How Touch ID works](docs/touch-id.md) for diagrams of startup,
 enrollment, cold-boot restore, and authentication.
 
-[Setup without Omarchy](docs/setup.md) covers manual installation and standard
+[Manual setup](docs/setup.md) covers installation and standard
 fingerprint tools; its exact-package validation is still pending.
 
 ## Package boundaries
 
 T1Bridge owns T1 hardware support, protected machine-data import and recovery,
 the fingerprint backend, and the default Touch Bar. Its core does not depend on
-Omarchy or the separately packaged libfprint/fprintd integration.
+desktop integration or the separately packaged libfprint/fprintd integration.
 
 Standard fprintd tools provide fingerprint management. A reusable management
 TUI and a baseline desktop-controls provider are planned as separate optional
-packages. Omarchy owns installer preservation, automatic setup, menus, themes,
-and HUD integration. Custom Touch Bar renderers remain user-selected programs,
-not bundled presets.
+packages. Distribution integrations own installer preservation, automatic
+setup, menus, themes, and HUD integration. Custom Touch Bar renderers remain
+user-selected programs, not bundled presets.
 
 Maintained by Andrew Boyd.

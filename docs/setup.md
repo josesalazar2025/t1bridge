@@ -1,12 +1,12 @@
-# Setup without Omarchy
+# Manual setup
 
 This is a source-checked **pre-release guide**, not a completed installation
 test. No public package repository or signing key is available yet. The
 [release gate](release-gate/v1.md) tracks validation of these steps on the exact
 release packages.
 
-T1Bridge does not require Omarchy. The supplied packages currently target
-x86_64 Arch Linux with systemd; other distributions need their own packaging.
+The supplied packages currently target x86_64 Arch Linux with systemd; other
+distributions need their own packaging.
 See [supported versions](dependencies.md#supported-and-tested-versions).
 
 ## Install and start the hardware stack
@@ -130,7 +130,7 @@ requesting application accepted authentication.
 
 The default renderer is included. Hardware controls use T1Bridge's advertised
 capabilities; desktop audio/media actions and notifications need an optional
-provider. There is no bundled Omarchy command or generic provider binary.
+provider. No desktop provider is bundled.
 
 To use a compatible provider, set `T1BRIDGE_DESKTOP_PROVIDER` to its absolute
 executable path in a user-service drop-in (`systemctl --user edit
