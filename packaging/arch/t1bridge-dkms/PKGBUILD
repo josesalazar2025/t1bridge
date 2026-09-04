@@ -1,6 +1,6 @@
 pkgname=t1bridge-dkms
 pkgver=0.1.0
-pkgrel=9
+pkgrel=10
 pkgdesc='Kernel modules for the Apple T1 iBridge display, camera, and private NCM link'
 arch=('x86_64')
 url='https://github.com/andrew-boyd/t1bridge'
@@ -9,7 +9,7 @@ depends=('dkms')
 optdepends=('linux-headers: build modules for the Arch kernel')
 options=('!debug')
 source=("t1bridge-${pkgver}.tar.gz")
-sha256sums=('b44c978b8e9c70caa9309ea86fe27dbefb79de990e74f7758b7352b29bb68a15')
+sha256sums=('a5df2bc865230bb9bee81fc73e7da2c9874d2d71d4a1c7e7da7265c67afa9995')
 backup=('etc/mkinitcpio.conf.d/t1bridge.conf')
 
 package() {
@@ -44,4 +44,6 @@ package() {
 		"${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
 	install -Dm644 "${source_root}/kernel/LICENSE.md" \
 		"${pkgdir}/usr/share/licenses/${pkgname}/KERNEL-LICENSES.md"
+	install -Dm644 "${source_root}/LICENSES/GPL-2.0-only.txt" \
+		"${pkgdir}/usr/share/licenses/${pkgname}/GPL-2.0.txt"
 }

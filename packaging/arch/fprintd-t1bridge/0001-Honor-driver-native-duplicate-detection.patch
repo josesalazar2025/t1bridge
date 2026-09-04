@@ -74,13 +74,34 @@ index a1fef1c..15b9daa 100644
          self.send_command('SET_ENROLL_STAGES', device_stages)
          while self.num_enroll_stages != stages:
              ctx.iteration(True)
-@@ -987,6 +991,9 @@ class FPrintdVirtualStorageDeviceTests(FPrintdVirtualStorageDeviceBaseTest):
+@@ -987,6 +991,10 @@ class FPrintdVirtualStorageDeviceTests(FPrintdVirtualStorageDeviceBaseTest):
          self.try_release()
          super().tearDown()
  
 +    def test_native_duplicate_detection_uses_device_stage_count(self):
++        self._maybe_reduce_enroll_stages()
 +        self.assertEqual(self.num_enroll_stages, self.enroll_stages)
 +
      def test_garbage_collect(self):
          # We expect collection in this order
          garbage_collect = [
+@@ -1310,7 +1318,8 @@ class FPrintdVirtualDeviceTest(FPrintdVirtualDeviceBaseTest):
+             self.driver_name)
+ 
+     def test_enroll_stages_property(self):
+-        self.assertEqual(self.device.get_cached_property('num-enroll-stages').unpack(), 6)
++        expected = 5 if self.has_native_duplicate_detection else 6
++        self.assertEqual(self.device.get_cached_property('num-enroll-stages').unpack(), expected)
+ 
+     def test_scan_type(self):
+         self.assertEqual(self.device.get_cached_property('scan-type').unpack(),
+@@ -3336,9 +3345,6 @@ class FPrintdUtilsTest(FPrintdVirtualStorageDeviceBaseTest):
+         self.send_image('print-id')
+         out.check_line('Enroll result: enroll-stage-passed', get_timeout())
+ 
+-        self.send_image('print-id')
+-        out.check_line('Enroll result: enroll-stage-passed', get_timeout())
+-
+         self.send_retry(FPrint.DeviceRetry.CENTER_FINGER)
+         out.check_line('Enroll result: enroll-finger-not-centered', get_timeout())
+ 
