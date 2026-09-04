@@ -1373,3 +1373,13 @@ index 0000000..5277ea9
 +  g_test_add_func ("/t1bridge/empty-identities", test_empty_identities);
 +  return g_test_run ();
 +}
+diff --git a/libfprint/drivers/virtual-device-storage.c b/libfprint/drivers/virtual-device-storage.c
+--- a/libfprint/drivers/virtual-device-storage.c
++++ b/libfprint/drivers/virtual-device-storage.c
+@@ -260,5 +260,6 @@ static const FpIdEntry driver_ids[] = {
+   { .virtual_envvar = "FP_VIRTUAL_DEVICE_STORAGE", .driver_data = 0 },
+   { .virtual_envvar = "FP_VIRTUAL_DEVICE_STORAGE_NO_LIST", .driver_data = FP_DEVICE_FEATURE_STORAGE_LIST },
++  { .virtual_envvar = "FP_VIRTUAL_DEVICE_STORAGE_NO_DUPLICATES_CHECK", .driver_data = FP_DEVICE_FEATURE_DUPLICATES_CHECK },
+   { .virtual_envvar = NULL }
+ };
+ 

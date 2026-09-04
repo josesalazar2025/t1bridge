@@ -1,6 +1,6 @@
 pkgname=libfprint-t1bridge
 pkgver=1.94.100
-pkgrel=6
+pkgrel=7
 pkgdesc='libfprint with Apple Touch ID support through T1Bridge'
 arch=('x86_64')
 url='https://github.com/andrew-boyd/t1bridge'
@@ -37,7 +37,7 @@ source=(
   '0002-Use-relative-test-helper-path.patch'
 )
 sha256sums=('e892f6b938c61db1956614cc143f3ad14f09b84808c790c2affe090854e540e4'
-            '1942cba9c863d0c3177dba71a369b55ef557c881db6a0d248c3126be246ac5aa'
+            '5f0cea3c603526272587703916844ef7a73b3401d7def9889188143bbdedbd51'
             '43a10082d4909eb0ba161679537dae9ab23835f69f20d414c671251aae5424ed')
 
 prepare() {

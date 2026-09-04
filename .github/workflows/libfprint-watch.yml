@@ -19,6 +19,38 @@ permissions:
   contents: read
 
 jobs:
+  stack-tests:
+    needs: compatibility
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel@sha256:a26046b7363dad8e2614858f4313949ae9b05c9c5f31de343a54864b9e20806f
+    timeout-minutes: 30
+    steps:
+      - name: Install checkout and build prerequisites
+        run: pacman -Syu --noconfirm --needed git sudo
+
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+
+      - name: Build and test the matched fingerprint packages
+        run: |
+          set -euo pipefail
+          useradd --create-home builder
+          printf 'builder ALL=(root) NOPASSWD: /usr/bin/pacman\n' >/etc/sudoers.d/t1bridge-builder
+          chmod 0440 /etc/sudoers.d/t1bridge-builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          for package in libfprint-t1bridge fprintd-t1bridge; do
+            directory="$GITHUB_WORKSPACE/packaging/arch/$package"
+            runuser -u builder -- makepkg --dir "$directory" \
+              --syncdeps --noconfirm --nosign
+            if test "$package" = libfprint-t1bridge; then
+              mapfile -t built < <(find "$directory" -maxdepth 1 -name '*.pkg.tar.zst' -type f)
+              test "${#built[@]}" -eq 1
+              pacman -U --noconfirm "${built[0]}"
+            fi
+          done
+
   compatibility:
     runs-on: ubuntu-24.04
     container: archlinux:base-devel@sha256:a26046b7363dad8e2614858f4313949ae9b05c9c5f31de343a54864b9e20806f
