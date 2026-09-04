@@ -1,6 +1,6 @@
 pkgname=fprintd-t1bridge
 pkgver=1.94.5
-pkgrel=1
+pkgrel=2
 pkgdesc='fprintd with native duplicate detection support for T1Bridge'
 arch=('x86_64')
 url='https://github.com/andrew-boyd/t1bridge'

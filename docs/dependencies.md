@@ -66,7 +66,7 @@ The v1 packaging contract is intentionally narrow:
 - Rust: 1.88 is the declared minimum. `cargo +1.88.0 test --locked --workspace --all-targets --all-features` passes on the current private source; private CI also passes with Arch Rust 1.98.
 - Native toolchain: C17 and matching kernel Kbuild headers are required. The active development build uses GCC 16.2.1. CI pins its container image, while the installed Arch compiler, Rust toolchain, and kernel headers are point-in-time versions recorded by each run because both workflows update from their configured package mirrors.
 - XZ: the build and all-feature test gate uses the system `liblzma` headers and library from Arch `xz`; version 5.8.3 is tested. The current packaged runtime has no `liblzma` dynamic dependency.
-- Standard fingerprint stack: the matched compatibility pair is `libfprint-t1bridge 1.94.100-6` and `fprintd-t1bridge 1.94.5-1`. The fprintd package requires that exact T1Bridge libfprint package version and the libfprint 2 ABI.
+- Standard fingerprint stack: the matched compatibility pair is `libfprint-t1bridge 1.94.100-6` and `fprintd-t1bridge 1.94.5-2`. The fprintd package requires that exact T1Bridge libfprint package version and the libfprint 2 ABI.
 
 ## Audit evidence
 
