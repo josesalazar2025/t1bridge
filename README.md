@@ -21,6 +21,9 @@ contracts are in [`docs/`](docs/).
 Start with [How Touch ID works](docs/touch-id.md) for diagrams of startup,
 enrollment, cold-boot restore, and authentication.
 
+[Setup without Omarchy](docs/setup.md) covers manual installation and standard
+fingerprint tools; its exact-package validation is still pending.
+
 ## Package boundaries
 
 T1Bridge owns T1 hardware support, protected machine-data import and recovery,
