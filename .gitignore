@@ -6,6 +6,7 @@
 crates/*/c/test_t1_*
 !crates/*/c/test_t1_*.c
 crates/t1-platform/c/.sanitizer/
+crates/t1-touchbar-hw/c/.sanitizer/
 sep-probe/test_sep_*
 !sep-probe/test_sep_*.c
 sep-probe/.sanitizer/
