@@ -302,7 +302,8 @@ jobs:
           mapfile -t packages < <(find . -maxdepth 1 -type f \
             -name '*.pkg.tar.zst' -printf '%f\n' | sort)
           test "${#packages[@]}" -eq 4
-          sha256sum --check --strict SHA256SUMS.unsigned
+          actual_manifest=$(sha256sum *.PKGBUILD *.patch *.pkg.tar.zst *.tar.gz | sort -k2)
+          diff -u SHA256SUMS.unsigned <(printf '%s\n' "$actual_manifest")
 
       - name: Import replaceable signing subkey
         env:
