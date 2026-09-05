@@ -1,11 +1,11 @@
 # Hardware validation
 
-This is the acceptance runbook for the two owned, supported machines. Phase 2
+This is the acceptance runbook for the two supported test machines. Phase 2
 runs the Touch ID sections on both. Phase 5 runs the entire document on both
 using the exact signed release artifacts.
 
-While the second machine lacks Omarchy, Decision 49 stages current runs on the
-active Omarchy machine only. Those results may unblock private integration,
+While the second-machine package handoff is pending, current runs use the
+available machine. Those results may unblock private integration,
 but every two-machine acceptance row remains deferred until the same required
 matrix runs on the second machine; it is not waived.
 
