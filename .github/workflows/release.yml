@@ -339,7 +339,13 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse "refs/tags/$TAG")" = "$EXPECTED_TAG_OID"
           test "$(git rev-parse "$TAG^{commit}")" = "$EXPECTED_COMMIT_OID"
-          git verify-tag "$TAG"
+          tag_status=$(git verify-tag --raw "$TAG" 2>&1)
+          printf '%s\n' "$tag_status" |
+            awk -v expected="$SIGNING_PRIMARY_FINGERPRINT" '
+              $1 == "[GNUPG:]" && $2 == "VALIDSIG" {
+                count++; if ($NF != expected) bad=1
+              }
+              END { exit !(count == 1 && !bad) }'
 
       - name: Sign packages and repository
         env:
