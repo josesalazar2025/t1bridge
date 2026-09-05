@@ -352,7 +352,7 @@ unsafe extern "C" {
     #[link_name = "getegid"]
     fn c_getegid() -> u32;
 
-    #[cfg(all(feature = "seqpacket", test))]
+    #[cfg(all(feature = "seqpacket", any(test, feature = "seqpacket-test-support")))]
     #[link_name = "socketpair"]
     fn c_socketpair(domain: c_int, socket_type: c_int, protocol: c_int, pair: *mut c_int) -> c_int;
     #[cfg(all(feature = "seqpacket", test))]
@@ -1531,7 +1531,7 @@ pub(super) fn send_with_fd(
     }
 }
 
-#[cfg(all(feature = "seqpacket", test))]
+#[cfg(all(feature = "seqpacket", any(test, feature = "seqpacket-test-support")))]
 pub(super) fn seqpacket_pair_for_test() -> std::io::Result<(OwnedFd, OwnedFd)> {
     const AF_UNIX: c_int = 1;
     const SOCK_SEQPACKET: c_int = 5;

@@ -479,13 +479,7 @@ fn run_event_loop(
                 let Some(running) = active.as_ref() else {
                     return Err(AuthDaemonError::Scheduler);
                 };
-                let delivered = match running {
-                    ActiveRun::Direct(running) => running.session.deadline_expired(service),
-                    ActiveRun::Standard(running) => running.connection.deadline_expired(service),
-                };
-                if !delivered {
-                    return Err(AuthDaemonError::Scheduler);
-                }
+                cancel_or_await_completion(running, service)?;
             }
             LifecycleDecision::ExitIdle => {
                 if active.is_none()
@@ -731,13 +725,7 @@ fn process_active_standard_control(
         .receive_and_dispatch(service, owner_store, now)
     {
         Ok(StandardSocketEvent::Pending | StandardSocketEvent::CancellationPending) => Ok(()),
-        Ok(StandardSocketEvent::Closed) => {
-            if !running.connection.client_disconnected(service) {
-                return Err(AuthDaemonError::Scheduler);
-            }
-            running.disconnect_observed = true;
-            Ok(())
-        }
+        Ok(StandardSocketEvent::Closed) => disconnect_standard_run(running, service),
         Ok(StandardSocketEvent::ReplyQueued) => {
             running.reply_deadline = Some(now.saturating_add(REPLY_TIMEOUT));
             Ok(())
@@ -766,7 +754,13 @@ fn observe_active_disconnect(
                     running.disconnect_observed = true;
                     Ok(())
                 }
-                DisconnectObservation::OperationInactive => Err(AuthDaemonError::Scheduler),
+                DisconnectObservation::CancellationUnavailable => {
+                    if !running.session.is_active_in(service) {
+                        return Err(AuthDaemonError::Scheduler);
+                    }
+                    running.disconnect_observed = true;
+                    Ok(())
+                }
             }
         }
         ActiveRun::Standard(_) => Ok(()),
@@ -800,7 +794,9 @@ fn poll_active_worker(
                 // removal, ACM release, SEP release, BridgeXPC close, and relay
                 // recovery have already occurred in that order.
                 let reply = running.session.finish(service, &completion, now);
-                queue_reply(replies, reply, now);
+                if !running.disconnect_observed {
+                    queue_reply(replies, reply, now);
+                }
                 Ok(())
             }
             WorkerPoll::Lost => {
@@ -899,11 +895,7 @@ fn flush_active_standard_reply(
         .reply_deadline
         .is_some_and(|deadline| now >= deadline)
     {
-        if !running.connection.client_disconnected(service) {
-            return Err(AuthDaemonError::Scheduler);
-        }
-        running.disconnect_observed = true;
-        return Ok(());
+        return disconnect_standard_run(running, service);
     }
     match running.connection.flush_reply() {
         Ok(true) => {
@@ -911,14 +903,43 @@ fn flush_active_standard_reply(
             Ok(())
         }
         Ok(false) => Ok(()),
-        Err(_) => {
-            if !running.connection.client_disconnected(service) {
-                return Err(AuthDaemonError::Scheduler);
-            }
-            running.disconnect_observed = true;
-            Ok(())
-        }
+        Err(_) => disconnect_standard_run(running, service),
     }
+}
+
+fn cancel_or_await_completion(
+    running: &ActiveRun,
+    service: &mut BrokerServiceScheduler,
+) -> Result<(), AuthDaemonError> {
+    let owned = match running {
+        ActiveRun::Direct(running) => {
+            running.session.deadline_expired(service) || running.session.is_active_in(service)
+        }
+        ActiveRun::Standard(running) => {
+            running.connection.deadline_expired(service) || running.connection.is_active_in(service)
+        }
+    };
+    // A mutation cutoff can reject delivery while durable work still owns the
+    // lease. Await its exact completion; a lost worker remains fatal.
+    if owned {
+        Ok(())
+    } else {
+        Err(AuthDaemonError::Scheduler)
+    }
+}
+
+fn disconnect_standard_run(
+    running: &mut ActiveStandardRun,
+    service: &mut BrokerServiceScheduler,
+) -> Result<(), AuthDaemonError> {
+    if !running.connection.client_disconnected(service) && !running.connection.is_active_in(service)
+    {
+        return Err(AuthDaemonError::Scheduler);
+    }
+    running.connection.discard_reply();
+    running.reply_deadline = None;
+    running.disconnect_observed = true;
+    Ok(())
 }
 
 fn flush_replies(replies: &mut Vec<TimedReply>, now: Duration) {
@@ -948,13 +969,19 @@ fn map_socket_error(_: BrokerSocketError) -> AuthDaemonError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::mpsc::SyncSender;
     use t1_bridge::match_workflow::MatchOutcome;
 
     use crate::auth_protocol::{
-        AUTHENTICATE_REQUEST, AccessPolicy, CANCEL_REQUEST, PeerAddressFamily, PeerMetadata,
-        Response,
+        AUTHENTICATE_REQUEST, AccessPolicy, CANCEL_REQUEST, ENROLL_REQUEST, PeerAddressFamily,
+        PeerMetadata, Response,
     };
-    use crate::auth_scheduler::ScheduledDispatch;
+    use crate::auth_scheduler::{ScheduledDispatch, ScheduledStandardDispatch};
+    use crate::standard_connection::StandardConnection;
+    use crate::standard_fingerprint_protocol::{
+        FingerLabel, IdentityId, ServerMessage, TerminalOutcome, Username,
+    };
+    use crate::standard_operation_authority::{ResolvedStandardAccount, ResolvedStandardOperation};
 
     const OWNER_UID: u32 = 42_000;
 
@@ -972,6 +999,240 @@ mod tests {
 
     fn policy() -> AccessPolicy {
         AccessPolicy::new(OWNER_UID).unwrap()
+    }
+
+    fn closed_transport() -> OwnedFd {
+        let (socket, peer) = t1_platform::seqpacket::pair_for_test().unwrap();
+        drop(peer);
+        socket
+    }
+
+    fn direct_run(
+        service: &mut BrokerServiceScheduler,
+        cutoff: bool,
+    ) -> (Option<ActiveRun>, SyncSender<()>) {
+        let ScheduledDispatch::Start(scheduled) =
+            service.dispatch(peer(OWNER_UID), policy(), ENROLL_REQUEST, Duration::ZERO)
+        else {
+            panic!("synthetic enrollment starts")
+        };
+        if cutoff {
+            assert!(scheduled.authentication().close_cancellation());
+        }
+        let completion = scheduled
+            .authentication()
+            .completion_for_worker(Ok(MatchOutcome::Matched));
+        let (resume, gate) = sync_channel(1);
+        let (sender, receiver) = sync_channel(1);
+        let handle = thread::spawn(move || {
+            gate.recv().unwrap();
+            sender.send(completion).unwrap();
+        });
+        (
+            Some(ActiveRun::Direct(ActiveDirectRun {
+                session: ActiveBrokerSocketSession::for_test(closed_transport(), scheduled),
+                worker: WorkerThread { receiver, handle },
+                disconnect_observed: false,
+            })),
+            resume,
+        )
+    }
+
+    fn standard_run(
+        service: &mut BrokerServiceScheduler,
+        cutoff: bool,
+    ) -> (Option<ActiveRun>, SyncSender<()>) {
+        let username = Username::new("synthetic-owner").unwrap();
+        let account = ResolvedStandardAccount::new(&username, &username, OWNER_UID).unwrap();
+        let ScheduledStandardDispatch::Start(scheduled) = service.dispatch_standard(
+            peer(0),
+            Some(policy()),
+            ResolvedStandardOperation::Enroll {
+                account,
+                finger: FingerLabel::RightIndex,
+            },
+            Duration::ZERO,
+        ) else {
+            panic!("synthetic standard enrollment starts")
+        };
+        let (connection, job) = StandardConnection::for_test(
+            peer(0),
+            StandardConnectionConfig::new(6).unwrap(),
+            scheduled,
+        );
+        if cutoff {
+            assert!(job.operation().close_cancellation());
+        }
+        let completion = job.completion(ServerMessage::Terminal(TerminalOutcome::Enrolled(
+            IdentityId::new([0x21; 16]).unwrap(),
+        )));
+        let (resume, gate) = sync_channel(1);
+        let (sender, receiver) = sync_channel(1);
+        let handle = thread::spawn(move || {
+            gate.recv().unwrap();
+            sender
+                .send(StandardWorkerEvent::Progress(
+                    EnrollProgress::new(2, 6).unwrap(),
+                ))
+                .unwrap();
+            sender
+                .send(StandardWorkerEvent::Completed(completion))
+                .unwrap();
+        });
+        (
+            Some(ActiveRun::Standard(Box::new(ActiveStandardRun {
+                connection: StandardSocketConnection::for_test(closed_transport(), connection),
+                job,
+                worker: StandardWorkerThread { receiver, handle },
+                disconnect_observed: false,
+                reply_deadline: None,
+            }))),
+            resume,
+        )
+    }
+
+    fn finish_disconnected_run(
+        active: &mut Option<ActiveRun>,
+        scheduler: &mut BrokerServiceScheduler,
+        resume: &SyncSender<()>,
+    ) {
+        assert!(matches!(
+            scheduler.dispatch(
+                peer(OWNER_UID),
+                policy(),
+                AUTHENTICATE_REQUEST,
+                Duration::ZERO
+            ),
+            ScheduledDispatch::Reply(Response::Busy)
+        ));
+        resume.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut pending = Vec::new();
+        let mut replies = Vec::new();
+        while active.is_some() {
+            assert!(
+                Instant::now() < deadline,
+                "exact worker completion must drain"
+            );
+            poll_active_worker(
+                active,
+                &mut pending,
+                &mut replies,
+                scheduler,
+                Duration::ZERO,
+            )
+            .unwrap();
+            thread::yield_now();
+        }
+        assert!(
+            pending.is_empty() && replies.is_empty(),
+            "no reply retained for disconnected peer"
+        );
+        assert!(matches!(
+            scheduler.dispatch(
+                peer(OWNER_UID),
+                policy(),
+                AUTHENTICATE_REQUEST,
+                Duration::ZERO
+            ),
+            ScheduledDispatch::Start(_)
+        ));
+    }
+
+    #[test]
+    fn direct_disconnect_and_deadline_preserve_exact_completion_across_cutoff() {
+        for cutoff in [false, true] {
+            let mut scheduler = service();
+            let (mut active, resume) = direct_run(&mut scheduler, cutoff);
+            cancel_or_await_completion(active.as_ref().unwrap(), &mut scheduler).unwrap();
+            observe_active_disconnect(&mut active, &mut scheduler).unwrap();
+            let Some(ActiveRun::Direct(running)) = active.as_ref() else {
+                unreachable!()
+            };
+            assert!(running.disconnect_observed);
+            assert_eq!(running.session.authentication().is_cancelled(), !cutoff);
+            finish_disconnected_run(&mut active, &mut scheduler, &resume);
+        }
+    }
+
+    #[test]
+    fn standard_disconnect_and_reply_failures_drain_worker_across_cutoff() {
+        for cutoff in [false, true] {
+            for trigger in 0..3 {
+                let mut scheduler = service();
+                let (mut active, resume) = standard_run(&mut scheduler, cutoff);
+                cancel_or_await_completion(active.as_ref().unwrap(), &mut scheduler).unwrap();
+                if trigger == 0 {
+                    let unused_store = EnrollmentOwnerStore::new("/synthetic-unused-owner-store");
+                    process_active_standard_control(
+                        &mut active,
+                        &mut scheduler,
+                        &unused_store,
+                        Duration::ZERO,
+                    )
+                    .unwrap();
+                } else {
+                    let Some(ActiveRun::Standard(running)) = active.as_mut() else {
+                        unreachable!()
+                    };
+                    running
+                        .connection
+                        .queue_worker_progress(&running.job, EnrollProgress::new(1, 6).unwrap())
+                        .unwrap();
+                    running.reply_deadline = Some(if trigger == 1 {
+                        Duration::ZERO
+                    } else {
+                        REPLY_TIMEOUT
+                    });
+                    flush_active_standard_reply(&mut active, &mut scheduler, Duration::ZERO)
+                        .unwrap();
+                }
+                let Some(ActiveRun::Standard(running)) = active.as_ref() else {
+                    unreachable!()
+                };
+                assert!(running.disconnect_observed);
+                assert!(!running.connection.has_pending_reply());
+                assert!(running.reply_deadline.is_none());
+                assert_eq!(running.job.is_cancelled(), !cutoff);
+                finish_disconnected_run(&mut active, &mut scheduler, &resume);
+            }
+        }
+    }
+
+    #[test]
+    fn unavailable_cancellation_cannot_mask_foreign_scheduler_authority() {
+        for standard in [false, true] {
+            let mut scheduler = service();
+            let (mut active, resume) = if standard {
+                standard_run(&mut scheduler, true)
+            } else {
+                direct_run(&mut scheduler, true)
+            };
+            let mut foreign = service();
+            assert_eq!(
+                cancel_or_await_completion(active.as_ref().unwrap(), &mut foreign),
+                Err(AuthDaemonError::Scheduler)
+            );
+            match active.as_mut().unwrap() {
+                ActiveRun::Direct(_) => assert_eq!(
+                    observe_active_disconnect(&mut active, &mut foreign),
+                    Err(AuthDaemonError::Scheduler)
+                ),
+                ActiveRun::Standard(running) => assert_eq!(
+                    disconnect_standard_run(running, &mut foreign),
+                    Err(AuthDaemonError::Scheduler)
+                ),
+            }
+            match active.as_mut().unwrap() {
+                ActiveRun::Direct(_) => {
+                    observe_active_disconnect(&mut active, &mut scheduler).unwrap();
+                }
+                ActiveRun::Standard(running) => {
+                    disconnect_standard_run(running, &mut scheduler).unwrap();
+                }
+            }
+            finish_disconnected_run(&mut active, &mut scheduler, &resume);
+        }
     }
 
     fn poll_worker(mut worker: WorkerThread) -> WorkerPoll {

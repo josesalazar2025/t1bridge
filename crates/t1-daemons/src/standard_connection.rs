@@ -61,6 +61,27 @@ pub struct StandardConnection {
 }
 
 impl StandardConnection {
+    #[cfg(all(test, feature = "auth-broker-service"))]
+    pub(crate) fn for_test(
+        peer: PeerMetadata,
+        config: StandardConnectionConfig,
+        scheduled: ScheduledStandardOperation,
+    ) -> (Self, StandardWorkerJob) {
+        let job = StandardWorkerJob {
+            operation: scheduled.operation().clone_for_worker(),
+            deadline: scheduled.deadline(),
+        };
+        (
+            Self {
+                peer,
+                config,
+                opened: true,
+                active: Some(scheduled),
+            },
+            job,
+        )
+    }
+
     /// Binds one kernel-authenticated local peer to immutable capabilities.
     ///
     /// # Errors
@@ -222,6 +243,13 @@ impl StandardConnection {
         self.active
             .as_ref()
             .is_some_and(|active| service.standard_deadline_expired(active))
+    }
+
+    #[cfg(feature = "auth-broker-service")]
+    pub(crate) fn is_active_in(&self, service: &BrokerServiceScheduler) -> bool {
+        self.active
+            .as_ref()
+            .is_some_and(|active| service.owns_standard(active))
     }
 
     /// Routes exact worker loss through the shared scheduler's poison path.

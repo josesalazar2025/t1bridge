@@ -345,7 +345,7 @@ fn dispatch_connection(
 pub enum DisconnectObservation {
     Connected,
     CancellationDelivered,
-    OperationInactive,
+    CancellationUnavailable,
 }
 
 /// Active authentication tied to the owned request connection that started it.
@@ -364,6 +364,14 @@ impl<D> fmt::Debug for ActiveBrokerSocketSession<D> {
 }
 
 impl<D: AsFd> ActiveBrokerSocketSession<D> {
+    #[cfg(all(test, feature = "auth-broker-service"))]
+    pub(crate) const fn for_test(descriptor: D, scheduled: ScheduledAuthentication) -> Self {
+        Self {
+            descriptor,
+            scheduled,
+        }
+    }
+
     /// Token-associated operation used by the caller-owned hardware worker.
     #[must_use]
     pub const fn authentication(&self) -> &ActiveAuthentication {
@@ -378,10 +386,9 @@ impl<D: AsFd> ActiveBrokerSocketSession<D> {
 
     /// Probes for peer closure without consuming unexpected queued data.
     ///
-    /// A confirmed close or probe failure is delivered through the same exact
-    /// token path as explicit cancellation. A later match therefore cannot
-    /// authenticate a disconnected client. The caller chooses how often and
-    /// from which worker or event loop this nonblocking probe runs.
+    /// A confirmed close or probe failure requests exact-token cancellation.
+    /// After the mutation cutoff, cancellation is unavailable but the worker
+    /// still owns its lease until completion. The caller chooses probe cadence.
     pub fn observe_disconnect(
         &self,
         service: &mut BrokerServiceScheduler,
@@ -399,6 +406,11 @@ impl<D: AsFd> ActiveBrokerSocketSession<D> {
     /// resolves its lease.
     pub fn deadline_expired(&self, service: &mut BrokerServiceScheduler) -> bool {
         service.deadline_expired(&self.scheduled)
+    }
+
+    #[cfg(feature = "auth-broker-service")]
+    pub(crate) fn is_active_in(&self, service: &BrokerServiceScheduler) -> bool {
+        service.owns(&self.scheduled)
     }
 
     /// Finalizes the exact operation and retains its response for send.
@@ -462,7 +474,7 @@ fn observe_disconnect_result(
     if service.client_disconnected(scheduled) {
         DisconnectObservation::CancellationDelivered
     } else {
-        DisconnectObservation::OperationInactive
+        DisconnectObservation::CancellationUnavailable
     }
 }
 
@@ -817,7 +829,7 @@ mod tests {
         assert_eq!(service.abandon(&scheduled, NOW), Response::Failure);
         assert_eq!(
             observe_disconnect_result(Err(SeqPacketError::Receive), &mut service, &scheduled),
-            DisconnectObservation::OperationInactive
+            DisconnectObservation::CancellationUnavailable
         );
     }
 

@@ -677,12 +677,12 @@ impl BrokerServiceScheduler {
         self.owns_standard(scheduled) && self.workers.worker_lost(scheduled.lease)
     }
 
-    fn owns(&self, scheduled: &ScheduledAuthentication) -> bool {
+    pub(crate) fn owns(&self, scheduled: &ScheduledAuthentication) -> bool {
         Arc::ptr_eq(&self.identity, &scheduled.service_identity)
             && self.workers.owns(scheduled.lease)
     }
 
-    fn owns_standard(&self, scheduled: &ScheduledStandardOperation) -> bool {
+    pub(crate) fn owns_standard(&self, scheduled: &ScheduledStandardOperation) -> bool {
         Arc::ptr_eq(&self.identity, &scheduled.service_identity)
             && self.workers.owns(scheduled.lease)
     }

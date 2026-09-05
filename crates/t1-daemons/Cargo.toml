@@ -55,3 +55,6 @@ pedantic = "warn"
 [dependencies]
 t1-bridge = { path = "../t1-bridge", version = "=0.0.0" }
 t1-platform = { path = "../t1-platform", version = "=0.0.0", features = ["secret-wipe", "sep-operation", "seqpacket"] }
+
+[dev-dependencies]
+t1-platform = { path = "../t1-platform", version = "=0.0.0", features = ["seqpacket-test-support"] }

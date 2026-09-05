@@ -192,6 +192,15 @@ impl<D> fmt::Debug for StandardSocketConnection<D> {
 }
 
 impl<D: AsFd> StandardSocketConnection<D> {
+    #[cfg(all(test, feature = "auth-broker-service"))]
+    pub(crate) const fn for_test(descriptor: D, connection: StandardConnection) -> Self {
+        Self {
+            descriptor,
+            connection,
+            outbound: None,
+        }
+    }
+
     /// Receives and dispatches one complete bounded packet.
     ///
     /// # Errors
@@ -340,6 +349,16 @@ impl<D: AsFd> StandardSocketConnection<D> {
 
     pub fn deadline_expired(&self, service: &mut BrokerServiceScheduler) -> bool {
         self.connection.deadline_expired(service)
+    }
+
+    #[cfg(feature = "auth-broker-service")]
+    pub(crate) fn is_active_in(&self, service: &BrokerServiceScheduler) -> bool {
+        self.connection.is_active_in(service)
+    }
+
+    #[cfg(feature = "auth-broker-service")]
+    pub(crate) fn discard_reply(&mut self) {
+        self.outbound = None;
     }
 
     #[must_use]

@@ -507,6 +507,16 @@ pub fn connect_auth() -> Result<OwnedFd, SeqPacketError> {
     Ok(descriptor)
 }
 
+/// Creates a nonblocking local socket pair for cross-crate transport tests.
+///
+/// # Errors
+///
+/// Returns the OS error if socket allocation fails.
+#[cfg(feature = "seqpacket-test-support")]
+pub fn pair_for_test() -> std::io::Result<(OwnedFd, OwnedFd)> {
+    ffi::seqpacket_pair_for_test()
+}
+
 fn require_root_peer(descriptor: &OwnedFd) -> Result<(), SeqPacketError> {
     let credentials = SeqPacketClient::new(descriptor.as_fd()).peer_credentials()?;
     require_root_credentials(credentials)
