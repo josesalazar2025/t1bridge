@@ -8,8 +8,8 @@ unsigned packages are byte-identical. Both jobs use a pinned
 Arch container and one dated Arch Linux Archive snapshot so the toolchain and
 package inputs do not drift between runs.
 
-Before signing, the build job installs all four candidates into an isolated
-Arch root, applies their systemd presets and state declarations, reinstalls the
+Before signing, the build job installs all four candidates in its disposable
+Arch container, applies their systemd presets and state declarations, reinstalls the
 second byte-identical build, deactivates the preset units, and removes all four
 packages. It requires package-owned files to disappear while protected machine
 data and user renderer selection remain.
