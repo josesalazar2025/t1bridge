@@ -1,8 +1,8 @@
 # Hardware validation
 
-This is the acceptance runbook for the two supported test machines. Phase 2
-runs the Touch ID sections on both. Phase 5 runs the entire document on both
-using the exact signed release artifacts.
+This is the acceptance runbook for the two supported test machines. Phase 5
+uses the exact signed release artifacts on both. Earlier candidate results
+remain useful evidence but do not replace that final pass.
 
 While the second-machine package handoff is pending, current runs use the
 available machine. Those results may unblock private integration,
@@ -13,6 +13,13 @@ Record only the model, kernel version, T1Bridge package versions, artifact
 checksums, step result, and relevant redacted logs. Never record serials,
 network addresses, host or volume identifiers, machine-data contents,
 catacombs, keybags, xART records, or biometric data in the repository.
+
+For a new machine, follow [manual setup](setup.md), then safety preflight and
+the standard fingerprint package flow below. Do not create an unlabeled legacy
+enrollment or install a development override. The later direct-client,
+protocol-spike, and legacy-recovery sections describe separately scoped tests,
+not first-install steps. Retain any outstanding evidence for those boundaries
+as pending rather than manufacturing legacy state to satisfy a checklist.
 
 The `t1bridge` commands named below are the required interface for the packaged
 Rust CLI. Until a phase implements a command, that acceptance step cannot pass.
@@ -62,21 +69,71 @@ test changes.
 4. Verify that the accepted xART connection arrives on the dynamically
    discovered T1 NCM interface and that its peer matches the packaged protocol
    constant. Record only pass or fail, never the observed interface or address.
-   This row is pending on the active MacBookPro13,3 and deferred on the
-   MacBookPro14,3 under Decision 49.
+   This row remains pending on both required models.
 5. Before any PAM install, removal, or fault injection, open a persistent root
    shell in a separate terminal and verify it is root. Keep it open until
    fingerprint and password paths have both passed after restoration.
 6. Confirm the existing password path works before enabling `pam_fprintd`.
-7. Confirm enrollment will not overwrite an active catacomb pair. Use a machine
-   with no T1Bridge enrollment or preserve the existing state outside the test
-   path and explicitly authorize a fresh test enrollment. The CLI must refuse
-   an in-place overwrite.
+7. Record the existing standard finger labels before mutation. Agree on the
+   exact test fingers and deletion scope with the machine owner. Preserve
+   existing protected state; do not clear it to simulate a fresh install.
+   A machine already containing enrollments cannot prove empty-state setup.
 
 If any preflight check fails, stop. Do not change PAM, USB configuration,
 firmware, broad power settings, or preserved biometric state to force a pass.
 
-## Enrollment from scratch
+## Standard fingerprint package flow
+
+Use the normal graphical user and the packaged `fprintd` utilities, with the
+distribution's Polkit agent available. Authorization and capture are separate:
+complete any authorization prompt before touching the finger being enrolled.
+Do not use `sudo fprintd-enroll` to bypass the installed authorization policy.
+
+1. Run `fprintd-list "$(id -un)"` and record the baseline labels. On a genuinely
+   new machine, confirm there is no pre-existing T1Bridge enrollment without
+   deleting or moving state. Complete the manual guide's machine-data import
+   before enrollment; record the automatic ESP or explicit backup path as a
+   separate acceptance result, without recording its private source path.
+2. Choose an unused label, for example `right-index-finger`, and run
+   `fprintd-enroll -f right-index-finger`. Repeatedly lift and touch that same
+   finger. Expect enrollment instructions and monotonic progress, followed by
+   `enroll-completed` only after durable commit. Re-list and require the exact
+   new label plus every baseline label. A cosmetic success overlay alone is
+   not evidence of success.
+3. Run `fprintd-verify -f right-index-finger` in a fresh process. The correct
+   finger must yield `verify-match`; a different, unenrolled finger must not.
+   With at least two enrolled labels, also run `fprintd-verify -f any` with each
+   enrolled finger. This exercises Identify; with only one label fprintd uses
+   Verify instead, so that result cannot establish Identify coverage.
+4. While below capacity, request another unused label but touch an already
+   enrolled finger. Expect `enroll-duplicate`, no new label, and no loss of
+   existing matches. Then use a genuinely new finger and complete enrollment.
+   Do not expose the internal duplicate check as a separate user operation.
+5. With three identities present, request a fourth unused label. Expect
+   `enroll-data-full` without mutation. Record capacity separately from duplicate
+   detection: a full device may reject before it scans for duplicates.
+6. Restart the broker and fprintd while idle, then repeat list, labelled Verify,
+   and multi-label Identify. This proves process-restart persistence, not an
+   empty SEP restore; that requires the separately approved reboot/cold-boot
+   slice below. Never restart services during an unrelated authentication.
+7. Delete only an explicitly authorized disposable label using
+   `fprintd-delete "$(id -un)" -f right-middle-finger` (substitute its actual
+   label). Never omit `-f`. Re-list: only that label may disappear. Verify must
+   reject that label, Identify must reject the deleted physical finger, and
+   each remaining finger must still work. Re-enroll it only with separate
+   authorization and verify the new enrollment again.
+
+Cancellation, device loss, reboot, camera concurrency, and password fallback
+remain separate required sections below. Run each interactive action only after
+the readiness handshake. If multiple readers are attached, stop before using
+the delete utility: it visits every reader, so the intended device scope must
+be resolved first.
+
+## Direct enrollment from scratch
+
+This tests the retained direct client, not standard fingerprint setup. It
+requires a separately authorized empty-state slice; do not run it after the
+standard flow or erase that flow's state to make room.
 
 1. Run `t1bridge enroll` from a state with no active T1Bridge enrollment.
 2. Repeatedly lift and rest one finger when prompted.
@@ -85,8 +142,8 @@ firmware, broad power settings, or preserved biometric state to force a pass.
 Expected outcome:
 
 - calibration loads before sensor capture;
-- the Touch Bar shows the enrollment instruction beside the sensor without
-  hiding Escape or unrelated stock controls;
+- the Touch Bar shows the enrollment instruction beside the sensor, keeps
+  Escape usable, and blacks out other controls while the overlay is active;
 - enrollment completes only after the user and master catacombs are both
   durably committed in that order;
 - both files and any advanced xART record are root-private;
@@ -110,6 +167,9 @@ Expected outcome:
   restores the keybag relay.
 
 ## Standard fingerprint hardware go/no-go
+
+This is the historical pre-adapter protocol spike. It is not the packaged
+handoff procedure and cannot substitute for the standard package flow above.
 
 From a source checkout, use the development smoke command through the
 production broker scheduler and live worker to validate the standard
@@ -215,12 +275,23 @@ Expected outcome:
 
 Any case in which password authentication is unavailable is a release blocker.
 
-## Hyprlock
+## Lock screen and Polkit
+
+Keep the verified root recovery shell and working password path available
+throughout this section. Use the distribution's installed lock screen; no
+particular compositor or pending desktop patch is required by T1Bridge.
 
 1. With the healthy stack restored, lock the active desktop session.
 2. Unlock once with the enrolled finger.
 3. Lock again, begin a fingerprint attempt, then enter the normal password.
 4. Lock once more and cancel from the Touch ID region on the Touch Bar.
+5. Repeat password-only unlock with the broker unavailable and its activation
+   sockets stopped; a stopped process alone can be restarted by socket
+   activation. Restore the previous service/socket state afterward.
+6. Through the distribution's normal Polkit agent, request a harmless action
+   requiring fresh authentication. Prove fingerprint success, then password
+   fallback with the same broker fault. Do not infer Polkit or lock-screen
+   fallback from the sudo result.
 
 Expected outcome:
 
@@ -233,7 +304,7 @@ Expected outcome:
 
 ## General cancellation
 
-Cancel enrollment during capture, cancel direct matching before a touch, and
+Cancel standard enrollment during capture, cancel verification before a touch, and
 disconnect an authentication client while matching.
 
 Expected outcome for every case:
@@ -272,8 +343,10 @@ repository. Otherwise, treat a successful boot as unattributable residue.
    required ownership and permissions. Do not copy their names, contents, or
    hashes into the repository report.
 2. Reboot normally.
-3. Run `sudo t1bridge status`, then repeat direct match, sudo fingerprint,
-   sudo password, and Hyprlock fingerprint checks.
+3. Run `sudo t1bridge status`, then repeat standard list, labelled Verify,
+   multi-label Identify, sudo fingerprint/password, lock-screen, and Polkit
+   checks. Record a normal reboot and an owner-approved cold shutdown/start
+   separately; one does not establish the other.
 
 Expected outcome:
 
@@ -303,7 +376,7 @@ suspend-capable host, a T1Bridge-specific failure remains a validation failure.
 
 1. Confirm the stack is idle and healthy.
 2. Suspend through the normal desktop path, wait for full sleep, then resume.
-3. Repeat direct match and the stock Touch Bar smoke test.
+3. Repeat standard verification and the stock Touch Bar smoke test.
 
 Expected outcome:
 
@@ -325,7 +398,7 @@ Expected outcome:
 - the T1 returns in the validated display configuration;
 - DRM and NCM devices reappear and their services recover;
 - the Touch Bar renders again;
-- direct match succeeds; and
+- standard verification succeeds; and
 - unrelated USB devices and the camera remain usable.
 
 ## Guarded in-flight fingerprint loss
@@ -350,8 +423,8 @@ Expected outcome:
 
 1. Confirm the packaged `uvcvideo` override exposes H.264 through V4L2.
 2. Capture and decode one frame through an ordinary V4L2 or PipeWire consumer.
-3. Keep capture running while exercising Touch Bar rendering and one direct
-   Touch ID match.
+3. Keep capture running while exercising Touch Bar rendering and one standard
+   fingerprint verification.
 
 Expected outcome:
 
@@ -361,8 +434,9 @@ Expected outcome:
 
 ## Stock Touch Bar smoke
 
-Use a clean user account with no selected renderer at
-`${XDG_CONFIG_HOME}/t1bridge/renderer`, so the packaged built-in is exercised.
+Use the enrolled graphical account with no selected renderer at
+`${XDG_CONFIG_HOME:-$HOME/.config}/t1bridge/renderer`, so the packaged built-in
+is exercised. Preserve an existing selection rather than deleting it.
 For the distribution-integration pass, configure that distribution's provider
 through `T1BRIDGE_DESKTOP_PROVIDER`. Verify:
 
@@ -370,11 +444,13 @@ through `T1BRIDGE_DESKTOP_PROVIDER`. Verify:
 - holding Fn exposes F1 through F12 and releasing Fn restores the stock strip;
 - display and keyboard-backlight controls change only their intended levels;
 - mute and volume controls work;
-- media controls appear only when a compatible player is available;
+- media controls retain their fixed chrome but act only when a compatible
+  player is available;
 - enrollment, authenticate, retry, cancel, and success overlays appear beside
   the sensor and never authenticate cosmetically; and
-- removing or failing the provider hides audio/media controls and uses the
-  journal fallback when desktop notification is unavailable, without changing
+- removing or failing the provider disables its controls without repacking the
+  strip and uses the journal fallback when notification is unavailable, without
+  changing
   Escape, Fn/F-keys, brightness, or Touch ID behavior.
 
 Expected outcome: no crash, stuck key, unexpected service restart, display
@@ -390,10 +466,13 @@ For each machine and phase, record a compact table:
 | Kernel | version |
 | Packages | exact versions and artifact checksums |
 | xART peer protocol constant | pass or fail |
-| Enrollment / match | pass or fail |
+| Machine-data import | automatic ESP / explicit backup, result for each |
+| Enrollment / Verify / Identify | pass or fail for each |
+| Duplicate / full / exact deletion | pass or fail for each |
 | PAM healthy / three faults | pass or fail for each |
-| Hyprlock / cancellation | pass or fail |
-| Reboot / suspend / USB cycle | pass, fail, or suspend not run |
+| Lock / Polkit healthy and broker-down fallback | pass or fail for each |
+| Cancellation / device loss / camera concurrency | pass or fail for each |
+| Reboot / cold boot / suspend / USB cycle | pass, fail, or suspend not run |
 | Stock Touch Bar | pass or fail |
 | Redacted evidence | journal time ranges or attached sanitized report |
 

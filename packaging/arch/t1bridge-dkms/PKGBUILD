@@ -9,7 +9,7 @@ depends=('dkms')
 optdepends=('linux-headers: build modules for the Arch kernel')
 options=('!debug')
 source=("t1bridge-${pkgver}.tar.gz")
-sha256sums=('9ce845138219553007fde652b8f9b38e18ce354cf8a4fe3125d1fefaad1cecb5')
+sha256sums=('02cb353faa345fe930002c9c39348a742e2407230022ab278d2e239b3efd61e2')
 backup=('etc/mkinitcpio.conf.d/t1bridge.conf')
 
 package() {
