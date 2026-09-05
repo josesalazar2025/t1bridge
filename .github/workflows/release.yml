@@ -16,6 +16,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -50,6 +54,7 @@ jobs:
         id: release-input
         run: |
           set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           version=$(bash -c 'source "$1"; printf "%s" "$pkgver"' _ packaging/arch/t1bridge/PKGBUILD)
           for recipe in packaging/arch/t1bridge{,-dkms}/PKGBUILD; do
             test "$(bash -c 'source "$1"; printf "%s" "$pkgver"' _ "$recipe")" = "$version"
@@ -355,6 +360,7 @@ jobs:
           EXPECTED_TAG_OID: ${{ needs.build.outputs.tag_oid }}
         run: |
           set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           test "$(git rev-parse "refs/tags/$TAG")" = "$EXPECTED_TAG_OID"
           test "$(git rev-parse "$TAG^{commit}")" = "$EXPECTED_COMMIT_OID"
           tag_status=$(git verify-tag --raw "$TAG" 2>&1)
