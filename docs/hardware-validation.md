@@ -94,6 +94,11 @@ Do not use `sudo fprintd-enroll` to bypass the installed authorization policy.
    deleting or moving state. Complete the manual guide's machine-data import
    before enrollment; record the automatic ESP or explicit backup path as a
    separate acceptance result, without recording its private source path.
+   Exercise the automatic route through its packaged systemd unit, not only
+   the explicit CLI. For explicit backup input, compare an idle broker with
+   an in-flight authentication in an owner-approved isolated window.
+   Require bounded completion or a redacted failure with calibration unchanged;
+   retry while idle and confirm ordinary fingerprint operation still works.
 2. Choose an unused label, for example `right-index-finger`, and run
    `fprintd-enroll -f right-index-finger`. Repeatedly lift and touch that same
    finger. Expect enrollment instructions and monotonic progress, followed by

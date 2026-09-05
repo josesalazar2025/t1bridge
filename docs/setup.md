@@ -88,6 +88,10 @@ No symlink component or special file is accepted. The backup is read-only,
 diagnostics do not print its path or identifiers, and a different existing
 calibration record is never overwritten.
 
+Run import while no fingerprint operation is in progress. A sensor-unavailable
+error does not change calibration; retry when the reader is idle rather than
+resetting hardware or deleting state.
+
 Compressed backups and macOS installer/disk-image containers are not accepted
 by this command yet. Extract a backup you control first; do not copy guessed
 records into protected storage. A generic macOS installer is not guaranteed

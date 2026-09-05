@@ -156,7 +156,7 @@ jobs:
               grep -v '^\./\.BUILDINFO ' >"$RUNNER_TEMP/alternate.mtree"
             cmp "$RUNNER_TEMP/canonical.mtree" "$RUNNER_TEMP/alternate.mtree"
           done
-          (cd release && sha256sum *.PKGBUILD *.patch *.pkg.tar.zst *.tar.gz | sort -k2 >SHA256SUMS.unsigned)
+          (cd release && sha256sum *.PKGBUILD *.patch *.pkg.tar.zst *.tar.gz | LC_ALL=C sort -k2 >SHA256SUMS.unsigned)
 
       - name: Verify isolated package lifecycle
         run: |
@@ -299,10 +299,12 @@ jobs:
           test -f 0002-Use-relative-test-helper-path.patch
           test -f 0001-Honor-driver-native-duplicate-detection.patch
           test -f 0002-Fix-tests-for-current-GLib.patch
+          test -z "$(find . -mindepth 1 ! -type f -print -quit)"
+          test "$(find . -mindepth 1 -type f -printf x | wc -c)" -eq 14
           mapfile -t packages < <(find . -maxdepth 1 -type f \
             -name '*.pkg.tar.zst' -printf '%f\n' | sort)
           test "${#packages[@]}" -eq 4
-          actual_manifest=$(sha256sum *.PKGBUILD *.patch *.pkg.tar.zst *.tar.gz | sort -k2)
+          actual_manifest=$(sha256sum *.PKGBUILD *.patch *.pkg.tar.zst *.tar.gz | LC_ALL=C sort -k2)
           diff -u SHA256SUMS.unsigned <(printf '%s\n' "$actual_manifest")
 
       - name: Import replaceable signing subkey
@@ -376,7 +378,7 @@ jobs:
           sha256sum *.PKGBUILD *.patch *.asc *.db *.db.tar.zst *.files \
             *.files.tar.zst *.pkg.tar.zst *.sig *.tar.gz \
             SHA256SUMS.unsigned |
-            sort -k2 >SHA256SUMS
+            LC_ALL=C sort -k2 >SHA256SUMS
 
       - name: Clear signing material
         if: always()
