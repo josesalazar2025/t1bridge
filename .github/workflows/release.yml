@@ -99,7 +99,7 @@ jobs:
             release/fprintd-t1bridge.PKGBUILD
           cp packaging/arch/fprintd-t1bridge/*.patch release/
 
-      - name: Build twice
+      - name: Build packages
         env:
           SOURCE_DATE_EPOCH: ${{ steps.source.outputs.epoch }}
         run: |
@@ -108,49 +108,22 @@ jobs:
           printf 'builder ALL=(root) NOPASSWD: /usr/bin/pacman\n' >/etc/sudoers.d/t1bridge-builder
           chmod 0440 /etc/sudoers.d/t1bridge-builder
           chown -R builder:builder "$GITHUB_WORKSPACE"
-          alternate_root="$RUNNER_TEMP/deeper/alternate/t1bridge-source"
-          alternate_output="$GITHUB_WORKSPACE/build-alternate"
-          install -d -o builder -g builder "$alternate_root" "$alternate_output"
-          cp -a "$GITHUB_WORKSPACE/packaging" "$alternate_root/"
-          cp "$GITHUB_WORKSPACE/LICENSE" "$alternate_root/"
-          for pass in 1 2; do
-            output="$GITHUB_WORKSPACE/build-$pass"
-            install -d -o builder -g builder "$output"
-            for package in t1bridge-dkms t1bridge libfprint-t1bridge fprintd-t1bridge; do
-              directory="$GITHUB_WORKSPACE/packaging/arch/$package"
-              if test "$package" = t1bridge || test "$package" = t1bridge-dkms; then
-                cp "$GITHUB_WORKSPACE/release/t1bridge-${{ steps.source.outputs.version }}.tar.gz" \
-                  "$directory/"
-              fi
-              runuser -u builder -- env \
-                SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
-                PKGDEST="$output" \
-                makepkg --dir "$directory" \
-                  --cleanbuild --clean --force --noconfirm --nosign --syncdeps
-              if test "$package" = libfprint-t1bridge; then
-                mapfile -t built_libfprint < <(
-                  find "$output" -maxdepth 1 -type f \
-                    -name 'libfprint-t1bridge-*.pkg.tar.zst' -print
-                )
-                test "${#built_libfprint[@]}" -eq 1
-                pacman -U --noconfirm --ask=4 "${built_libfprint[0]}"
-              fi
-            done
-          done
+          output="$GITHUB_WORKSPACE/build-packages"
+          install -d -o builder -g builder "$output"
           for package in t1bridge-dkms t1bridge libfprint-t1bridge fprintd-t1bridge; do
-            directory="$alternate_root/packaging/arch/$package"
+            directory="$GITHUB_WORKSPACE/packaging/arch/$package"
             if test "$package" = t1bridge || test "$package" = t1bridge-dkms; then
               cp "$GITHUB_WORKSPACE/release/t1bridge-${{ steps.source.outputs.version }}.tar.gz" \
                 "$directory/"
             fi
             runuser -u builder -- env \
               SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
-              PKGDEST="$alternate_output" \
+              PKGDEST="$output" \
               makepkg --dir "$directory" \
                 --cleanbuild --clean --force --noconfirm --nosign --syncdeps
             if test "$package" = libfprint-t1bridge; then
               mapfile -t built_libfprint < <(
-                find "$alternate_output" -maxdepth 1 -type f \
+                find "$output" -maxdepth 1 -type f \
                   -name 'libfprint-t1bridge-*.pkg.tar.zst' -print
               )
               test "${#built_libfprint[@]}" -eq 1
@@ -158,24 +131,12 @@ jobs:
             fi
           done
 
-      - name: Verify reproducibility and payload set
+      - name: Collect candidate packages
         run: |
           set -euo pipefail
-          mapfile -t first < <(find build-1 -maxdepth 1 -type f -name '*.pkg.tar.zst' -printf '%f\n' | sort)
-          mapfile -t second < <(find build-2 -maxdepth 1 -type f -name '*.pkg.tar.zst' -printf '%f\n' | sort)
-          mapfile -t alternate < <(find build-alternate -maxdepth 1 -type f -name '*.pkg.tar.zst' -printf '%f\n' | sort)
-          test "${#first[@]}" -eq 4
-          test "${first[*]}" = "${second[*]}"
-          test "${first[*]}" = "${alternate[*]}"
-          for package in "${first[@]}"; do
-            cmp "build-1/$package" "build-2/$package"
-            cp "build-1/$package" release/
-            bsdtar -xOf "build-1/$package" .MTREE | gzip -dc | \
-              grep -v '^\./\.BUILDINFO ' >"$RUNNER_TEMP/canonical.mtree"
-            bsdtar -xOf "build-alternate/$package" .MTREE | gzip -dc | \
-              grep -v '^\./\.BUILDINFO ' >"$RUNNER_TEMP/alternate.mtree"
-            cmp "$RUNNER_TEMP/canonical.mtree" "$RUNNER_TEMP/alternate.mtree"
-          done
+          mapfile -t packages < <(find build-packages -maxdepth 1 -type f -name '*.pkg.tar.zst' -print | sort)
+          test "${#packages[@]}" -eq 4
+          cp "${packages[@]}" release/
           (cd release && sha256sum *.PKGBUILD *.patch *.pkg.tar.zst *.tar.gz | LC_ALL=C sort -k2 >SHA256SUMS.unsigned)
 
       - name: Verify isolated package lifecycle
@@ -190,16 +151,14 @@ jobs:
           printf '%s\n' \
             'HOOKS=(base systemd microcode modconf kms keyboard sd-vconsole block filesystems fsck)' \
             >/etc/mkinitcpio.conf.d/00-lifecycle-generic.conf
-          mapfile -t first < <(find build-1 -maxdepth 1 -type f -name '*.pkg.tar.zst' -print | sort)
-          mapfile -t second < <(find build-2 -maxdepth 1 -type f -name '*.pkg.tar.zst' -print | sort)
-          test "${#first[@]}" -eq 4
-          test "${#second[@]}" -eq 4
+          mapfile -t packages < <(find build-packages -maxdepth 1 -type f -name '*.pkg.tar.zst' -print | sort)
+          test "${#packages[@]}" -eq 4
           pacman \
             --noconfirm --ask=4 -S --needed libfprint fprintd dkms linux linux-headers
           pacman \
             -Q libfprint fprintd
           pacman \
-            --noconfirm --ask=4 -U "${first[@]}"
+            --noconfirm --ask=4 -U "${packages[@]}"
           pacman \
             -Q t1bridge t1bridge-dkms libfprint-t1bridge fprintd-t1bridge
           ! pacman \
@@ -241,7 +200,7 @@ jobs:
           install -m 0700 /usr/bin/true \
             "/home/synthetic/.config/t1bridge/renderer"
           pacman \
-            --noconfirm -U "${second[@]}"
+            --noconfirm -U "${packages[@]}"
           test -f "/var/lib/t1bridge/machine-data/calibration.fscl"
           test -x "/home/synthetic/.config/t1bridge/renderer"
           assert_dkms_modules

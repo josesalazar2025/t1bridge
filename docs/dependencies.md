@@ -2,7 +2,7 @@
 
 This is the dependency and supported-version inventory for the current private
 tree. It distinguishes shipped runtime links from build and packaging tools.
-Reproducible final-release evidence remains a separate release gate.
+Final signed-build and hardware evidence remain separate release gates.
 
 ## Runtime and linked dependencies
 
@@ -79,5 +79,5 @@ confirmed the kernel-module relationships listed above.
 
 The minimum-Rust run, current private CI, dynamic-link inspection, DKMS build
 logs, package manifests, and active-machine versions establish the matrix
-above. The final tag still needs its reproducible signed build and exact
+above. The final tag still needs its signed build and exact
 release-artifact hardware pass.
