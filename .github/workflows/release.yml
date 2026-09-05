@@ -177,7 +177,7 @@ jobs:
             --logfile "$lifecycle_root/var/log/pacman.log" \
             --hookdir "$lifecycle_root/empty-hooks" \
             --gpgdir /etc/pacman.d/gnupg \
-            --noconfirm --noscriptlet -Sy --needed libfprint fprintd dkms
+            --noconfirm --noscriptlet -Sy --needed libfprint fprintd dkms linux linux-headers
           pacman --root "$lifecycle_root" \
             --dbpath "$lifecycle_root/var/lib/pacman" \
             -Q libfprint fprintd
@@ -197,6 +197,16 @@ jobs:
             --dbpath "$lifecycle_root/var/lib/pacman" \
             -Qq | grep -Fxq fprintd
           test -f "$lifecycle_root/usr/lib/modprobe.d/t1bridge.conf"
+          assert_dkms_modules() {
+            local module
+            local -a matches
+            for module in t1_cfgsel appletbdrm apple_t1_ncm uvcvideo; do
+              mapfile -t matches < <(find "$lifecycle_root/usr/lib/modules" \
+                -type f -path "*/updates/dkms/$module.ko*")
+              test "${#matches[@]}" -eq 1
+            done
+          }
+          assert_dkms_modules
           test -x "$lifecycle_root/usr/lib/fprintd"
           test -f "$lifecycle_root/usr/lib/security/pam_fprintd.so"
           test -f "$lifecycle_root/usr/lib/systemd/system/fprintd.service"
@@ -204,7 +214,9 @@ jobs:
           test -f "$lifecycle_root/usr/share/dbus-1/system.d/net.reactivated.Fprint.conf"
           systemd-sysusers --root="$lifecycle_root"
           systemd-tmpfiles --root="$lifecycle_root" --create
-          test "$(stat -c '%U:%G:%a' "$lifecycle_root/run/t1bridge")" = "root:t1bridge:750"
+          t1bridge_gid=$(awk -F: '$1 == "t1bridge" { print $3 }' "$lifecycle_root/etc/group")
+          [[ "$t1bridge_gid" =~ ^[0-9]+$ ]]
+          test "$(stat -c '%u:%g:%a' "$lifecycle_root/run/t1bridge")" = "0:$t1bridge_gid:750"
           systemctl --root="$lifecycle_root" preset \
             t1-touchbar-hw.service t1-touchid-auth.socket \
             t1bridge-fingerprint.socket t1bridge-import.service
@@ -226,6 +238,7 @@ jobs:
             --noconfirm --noscriptlet -U "${second[@]}"
           test -f "$lifecycle_root/var/lib/t1bridge/machine-data/calibration.fscl"
           test -x "$lifecycle_root/home/synthetic/.config/t1bridge/renderer"
+          assert_dkms_modules
           systemctl --root="$lifecycle_root" disable \
             t1-touchbar-hw.service t1-touchid-auth.socket \
             t1bridge-fingerprint.socket
