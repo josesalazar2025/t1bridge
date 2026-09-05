@@ -1,6 +1,6 @@
 pkgname=fprintd-t1bridge
 pkgver=1.94.5
-pkgrel=3
+pkgrel=4
 pkgdesc='fprintd with native duplicate detection support for T1Bridge'
 arch=('x86_64')
 url='https://github.com/andrew-boyd/t1bridge'
@@ -41,7 +41,7 @@ source=(
 )
 sha256sums=('26be694733389ad615a93da2803aba57bcb05a0cceca2e814b2075aae9d80cfb'
             '443b8ed5d07f6c877a6a42436bf86373d287fbebeb7a321741f30e26f5bd67f0'
-            '5881df930bf5f2c07c6822fc154484a3a38fb1b23383285c0439113c15278374')
+            'e754df76248ca01e1dcb19d6b510a4b02610994b038d4f647f410f52ef6c0fe0')
 
 prepare() {
   cd "fprintd-${_commit}"

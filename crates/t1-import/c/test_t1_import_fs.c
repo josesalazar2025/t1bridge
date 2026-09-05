@@ -83,7 +83,10 @@ static bool fixture_init(struct fixture *fixture)
 		"t1bridge") ||
 	    mkdir(fixture->first, 0755) < 0 ||
 	    mkdir(fixture->second, 0755) < 0 ||
-	    mkdir(fixture->data, 0700) < 0)
+	    mkdir(fixture->data, 0700) < 0 ||
+	    chmod(fixture->first, 0755) < 0 ||
+	    chmod(fixture->second, 0755) < 0 ||
+	    chmod(fixture->data, 0700) < 0)
 		return false;
 	fixture->anchor_fd = open_directory(fixture->root);
 	fixture->data_fd = open_directory(fixture->data);
