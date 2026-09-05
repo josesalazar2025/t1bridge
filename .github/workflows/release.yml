@@ -161,106 +161,88 @@ jobs:
       - name: Verify isolated package lifecycle
         run: |
           set -euo pipefail
-          lifecycle_root="$RUNNER_TEMP/t1bridge-lifecycle"
-          install -d \
-            "$lifecycle_root/empty-hooks" \
-            "$lifecycle_root/var/cache/pacman/pkg" \
-            "$lifecycle_root/var/lib/pacman" \
-            "$lifecycle_root/var/log"
+          test "${GITHUB_ACTIONS:-}" = true
+          test -f /.dockerenv
+          test "$(id -u)" -eq 0
+          export SYSTEMD_OFFLINE=1
+          # The build job already runs in a disposable Arch container.
+          install -d /etc/mkinitcpio.conf.d
+          printf '%s\n' \
+            'HOOKS=(base systemd microcode modconf kms keyboard sd-vconsole block filesystems fsck)' \
+            >/etc/mkinitcpio.conf.d/00-lifecycle-generic.conf
           mapfile -t first < <(find build-1 -maxdepth 1 -type f -name '*.pkg.tar.zst' -print | sort)
           mapfile -t second < <(find build-2 -maxdepth 1 -type f -name '*.pkg.tar.zst' -print | sort)
           test "${#first[@]}" -eq 4
           test "${#second[@]}" -eq 4
-          pacman --root "$lifecycle_root" \
-            --dbpath "$lifecycle_root/var/lib/pacman" \
-            --cachedir "$lifecycle_root/var/cache/pacman/pkg" \
-            --logfile "$lifecycle_root/var/log/pacman.log" \
-            --hookdir "$lifecycle_root/empty-hooks" \
-            --gpgdir /etc/pacman.d/gnupg \
-            --noconfirm --noscriptlet -Sy --needed libfprint fprintd dkms linux linux-headers
-          pacman --root "$lifecycle_root" \
-            --dbpath "$lifecycle_root/var/lib/pacman" \
+          pacman \
+            --noconfirm --ask=4 -S --needed libfprint fprintd dkms linux linux-headers
+          pacman \
             -Q libfprint fprintd
-          pacman --root "$lifecycle_root" \
-            --dbpath "$lifecycle_root/var/lib/pacman" \
-            --cachedir "$lifecycle_root/var/cache/pacman/pkg" \
-            --logfile "$lifecycle_root/var/log/pacman.log" \
-            --hookdir "$lifecycle_root/empty-hooks" \
-            --noconfirm --ask=4 --noscriptlet -U "${first[@]}"
-          pacman --root "$lifecycle_root" \
-            --dbpath "$lifecycle_root/var/lib/pacman" \
+          pacman \
+            --noconfirm --ask=4 -U "${first[@]}"
+          pacman \
             -Q t1bridge t1bridge-dkms libfprint-t1bridge fprintd-t1bridge
-          ! pacman --root "$lifecycle_root" \
-            --dbpath "$lifecycle_root/var/lib/pacman" \
+          ! pacman \
             -Qq | grep -Fxq libfprint
-          ! pacman --root "$lifecycle_root" \
-            --dbpath "$lifecycle_root/var/lib/pacman" \
+          ! pacman \
             -Qq | grep -Fxq fprintd
-          test -f "$lifecycle_root/usr/lib/modprobe.d/t1bridge.conf"
+          test -f "/usr/lib/modprobe.d/t1bridge.conf"
           assert_dkms_modules() {
             local module
             local -a matches
             for module in t1_cfgsel appletbdrm apple_t1_ncm uvcvideo; do
-              mapfile -t matches < <(find "$lifecycle_root/usr/lib/modules" \
+              mapfile -t matches < <(find "/usr/lib/modules" \
                 -type f -path "*/updates/dkms/$module.ko*")
               test "${#matches[@]}" -eq 1
             done
           }
           assert_dkms_modules
-          test -x "$lifecycle_root/usr/lib/fprintd"
-          test -f "$lifecycle_root/usr/lib/security/pam_fprintd.so"
-          test -f "$lifecycle_root/usr/lib/systemd/system/fprintd.service"
-          test -f "$lifecycle_root/usr/share/dbus-1/system-services/net.reactivated.Fprint.service"
-          test -f "$lifecycle_root/usr/share/dbus-1/system.d/net.reactivated.Fprint.conf"
-          systemd-sysusers --root="$lifecycle_root"
-          systemd-tmpfiles --root="$lifecycle_root" --create
-          t1bridge_gid=$(awk -F: '$1 == "t1bridge" { print $3 }' "$lifecycle_root/etc/group")
+          test -x "/usr/lib/fprintd"
+          test -f "/usr/lib/security/pam_fprintd.so"
+          test -f "/usr/lib/systemd/system/fprintd.service"
+          test -f "/usr/share/dbus-1/system-services/net.reactivated.Fprint.service"
+          test -f "/usr/share/dbus-1/system.d/net.reactivated.Fprint.conf"
+          systemd-sysusers --root=/
+          systemd-tmpfiles --root=/ --create
+          t1bridge_gid=$(awk -F: '$1 == "t1bridge" { print $3 }' "/etc/group")
           [[ "$t1bridge_gid" =~ ^[0-9]+$ ]]
-          test "$(stat -c '%u:%g:%a' "$lifecycle_root/run/t1bridge")" = "0:$t1bridge_gid:750"
-          systemctl --root="$lifecycle_root" preset \
+          test "$(stat -c '%u:%g:%a' "/run/t1bridge")" = "0:$t1bridge_gid:750"
+          systemctl --root=/ preset \
             t1-touchbar-hw.service t1-touchid-auth.socket \
             t1bridge-fingerprint.socket t1bridge-import.service
-          systemctl --root="$lifecycle_root" --global preset t1-touchbar.service
-          systemctl --root="$lifecycle_root" is-enabled --quiet t1-touchbar-hw.service
-          systemctl --root="$lifecycle_root" is-enabled --quiet t1-touchid-auth.socket
-          systemctl --root="$lifecycle_root" is-enabled --quiet t1bridge-fingerprint.socket
-          ! systemctl --root="$lifecycle_root" is-enabled --quiet t1bridge-import.service
+          systemctl --root=/ --global preset t1-touchbar.service
+          systemctl --root=/ is-enabled --quiet t1-touchbar-hw.service
+          systemctl --root=/ is-enabled --quiet t1-touchid-auth.socket
+          systemctl --root=/ is-enabled --quiet t1bridge-fingerprint.socket
+          ! systemctl --root=/ is-enabled --quiet t1bridge-import.service
           install -m 0600 /dev/null \
-            "$lifecycle_root/var/lib/t1bridge/machine-data/calibration.fscl"
-          install -d "$lifecycle_root/home/synthetic/.config/t1bridge"
+            "/var/lib/t1bridge/machine-data/calibration.fscl"
+          install -d "/home/synthetic/.config/t1bridge"
           install -m 0700 /usr/bin/true \
-            "$lifecycle_root/home/synthetic/.config/t1bridge/renderer"
-          pacman --root "$lifecycle_root" \
-            --dbpath "$lifecycle_root/var/lib/pacman" \
-            --cachedir "$lifecycle_root/var/cache/pacman/pkg" \
-            --logfile "$lifecycle_root/var/log/pacman.log" \
-            --hookdir "$lifecycle_root/empty-hooks" \
-            --noconfirm --noscriptlet -U "${second[@]}"
-          test -f "$lifecycle_root/var/lib/t1bridge/machine-data/calibration.fscl"
-          test -x "$lifecycle_root/home/synthetic/.config/t1bridge/renderer"
+            "/home/synthetic/.config/t1bridge/renderer"
+          pacman \
+            --noconfirm -U "${second[@]}"
+          test -f "/var/lib/t1bridge/machine-data/calibration.fscl"
+          test -x "/home/synthetic/.config/t1bridge/renderer"
           assert_dkms_modules
-          systemctl --root="$lifecycle_root" disable \
+          systemctl --root=/ disable \
             t1-touchbar-hw.service t1-touchid-auth.socket \
             t1bridge-fingerprint.socket
-          systemctl --root="$lifecycle_root" --global disable t1-touchbar.service
-          pacman --root "$lifecycle_root" \
-            --dbpath "$lifecycle_root/var/lib/pacman" \
-            --cachedir "$lifecycle_root/var/cache/pacman/pkg" \
-            --logfile "$lifecycle_root/var/log/pacman.log" \
-            --hookdir "$lifecycle_root/empty-hooks" \
-            --noconfirm --noscriptlet -R \
+          systemctl --root=/ --global disable t1-touchbar.service
+          pacman \
+            --noconfirm -R \
             t1bridge t1bridge-dkms libfprint-t1bridge fprintd-t1bridge
-          test ! -e "$lifecycle_root/usr/bin/t1bridge"
-          test ! -e "$lifecycle_root/usr/src/t1bridge-dkms-${{ steps.source.outputs.version }}"
-          test ! -e "$lifecycle_root/usr/lib/modprobe.d/t1bridge.conf"
-          test ! -e "$lifecycle_root/usr/lib/libfprint-2.so.2"
-          test ! -e "$lifecycle_root/usr/lib/fprintd"
-          test ! -e "$lifecycle_root/usr/lib/security/pam_fprintd.so"
-          test ! -e "$lifecycle_root/usr/lib/systemd/system/fprintd.service"
-          test ! -e "$lifecycle_root/usr/share/dbus-1/system-services/net.reactivated.Fprint.service"
-          test ! -e "$lifecycle_root/usr/share/dbus-1/system.d/net.reactivated.Fprint.conf"
-          test -f "$lifecycle_root/var/lib/t1bridge/machine-data/calibration.fscl"
-          test -x "$lifecycle_root/home/synthetic/.config/t1bridge/renderer"
+          test ! -e "/usr/bin/t1bridge"
+          test ! -e "/usr/src/t1bridge-dkms-${{ steps.source.outputs.version }}"
+          test ! -e "/usr/lib/modprobe.d/t1bridge.conf"
+          test ! -e "/usr/lib/libfprint-2.so.2"
+          test ! -e "/usr/lib/fprintd"
+          test ! -e "/usr/lib/security/pam_fprintd.so"
+          test ! -e "/usr/lib/systemd/system/fprintd.service"
+          test ! -e "/usr/share/dbus-1/system-services/net.reactivated.Fprint.service"
+          test ! -e "/usr/share/dbus-1/system.d/net.reactivated.Fprint.conf"
+          test -f "/var/lib/t1bridge/machine-data/calibration.fscl"
+          test -x "/home/synthetic/.config/t1bridge/renderer"
 
       - name: Save unsigned candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
