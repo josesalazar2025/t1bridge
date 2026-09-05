@@ -3,10 +3,15 @@ name: Private release candidate
 on:
   workflow_dispatch:
     inputs:
-      tag:
-        description: Existing signed release tag
+      ref:
+        description: Full commit SHA for build-only mode, or signed version tag for CI signing
         required: true
         type: string
+      ci_sign:
+        description: Sign using an owner-approval-protected environment
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -17,7 +22,8 @@ jobs:
     container: archlinux:base-devel@sha256:a26046b7363dad8e2614858f4313949ae9b05c9c5f31de343a54864b9e20806f
     timeout-minutes: 60
     env:
-      TAG: ${{ inputs.tag }}
+      RELEASE_REF: ${{ inputs.ref }}
+      CI_SIGN: ${{ inputs.ci_sign }}
     outputs:
       commit_oid: ${{ steps.release-input.outputs.commit_oid }}
       tag_oid: ${{ steps.release-input.outputs.tag_oid }}
@@ -29,12 +35,12 @@ jobs:
             >/etc/pacman.d/mirrorlist
           pacman -Syu --noconfirm --needed git
 
-      - name: Check out the exact tag
+      - name: Check out the exact release input
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ inputs.tag }}
+          ref: ${{ inputs.ref }}
 
       - name: Install build dependencies
         run: |
@@ -44,26 +50,34 @@ jobs:
         id: release-input
         run: |
           set -euo pipefail
-          test "$(git describe --tags --exact-match HEAD)" = "$TAG"
-          test "$(git cat-file -t "refs/tags/$TAG")" = tag
-          version=${TAG#v}
-          test "$TAG" = "v$version"
+          version=$(bash -c 'source "$1"; printf "%s" "$pkgver"' _ packaging/arch/t1bridge/PKGBUILD)
           for recipe in packaging/arch/t1bridge{,-dkms}/PKGBUILD; do
             test "$(bash -c 'source "$1"; printf "%s" "$pkgver"' _ "$recipe")" = "$version"
           done
-          printf 'commit_oid=%s\ntag_oid=%s\n' \
-            "$(git rev-parse "$TAG^{commit}")" \
-            "$(git rev-parse "refs/tags/$TAG")" >>"$GITHUB_OUTPUT"
+          tag_oid=
+          if test "$CI_SIGN" = true; then
+            test "$RELEASE_REF" = "v$version"
+            test "$(git cat-file -t "refs/tags/$RELEASE_REF")" = tag
+            test "$(git rev-parse "$RELEASE_REF^{commit}")" = "$(git rev-parse HEAD)"
+            tag_oid=$(git rev-parse "refs/tags/$RELEASE_REF")
+          else
+            [[ "$RELEASE_REF" =~ ^[0-9a-f]{40}$ ]]
+            test "$RELEASE_REF" = "$(git rev-parse HEAD)"
+          fi
+          printf 'commit_oid=%s\ntag_oid=%s\nversion=%s\n' \
+            "$(git rev-parse HEAD)" "$tag_oid" "$version" >>"$GITHUB_OUTPUT"
 
-      - name: Create deterministic tagged source
+      - name: Create deterministic source
         id: source
+        env:
+          VERSION: ${{ steps.release-input.outputs.version }}
         run: |
           set -euo pipefail
-          version=${TAG#v}
-          epoch=$(git show -s --format=%ct "$TAG^{commit}")
+          version=$VERSION
+          epoch=$(git show -s --format=%ct HEAD)
           mkdir -p release
           git archive --format=tar --mtime='1970-01-01T00:00:00Z' \
-            --prefix="t1bridge-$version/" "$TAG^{tree}" |
+            --prefix="t1bridge-$version/" HEAD^{tree} |
             gzip -n >"release/t1bridge-$version.tar.gz"
           archive_sha=$(sha256sum "release/t1bridge-$version.tar.gz" | cut -d' ' -f1)
           for recipe in packaging/arch/t1bridge{,-dkms}/PKGBUILD; do
@@ -247,12 +261,13 @@ jobs:
       - name: Save unsigned candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: unsigned-${{ inputs.tag }}
+          name: unsigned-${{ steps.release-input.outputs.commit_oid }}
           path: release/
           if-no-files-found: error
           retention-days: 7
 
   sign:
+    if: ${{ inputs.ci_sign }}
     needs: build
     runs-on: ubuntu-24.04
     container: archlinux:base-devel@sha256:a26046b7363dad8e2614858f4313949ae9b05c9c5f31de343a54864b9e20806f
@@ -263,7 +278,7 @@ jobs:
     env:
       SIGNING_FINGERPRINT: ${{ vars.T1BRIDGE_SIGNING_SUBKEY_FINGERPRINT }}
       SIGNING_PRIMARY_FINGERPRINT: ${{ vars.T1BRIDGE_SIGNING_PRIMARY_FINGERPRINT }}
-      TAG: ${{ inputs.tag }}
+      TAG: ${{ inputs.ref }}
     steps:
       - name: Install repository tools
         run: |
@@ -277,12 +292,12 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ inputs.tag }}
+          ref: ${{ inputs.ref }}
 
       - name: Download unsigned candidate
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
-          name: unsigned-${{ inputs.tag }}
+          name: unsigned-${{ needs.build.outputs.commit_oid }}
           path: release
 
       - name: Verify unsigned candidate
@@ -365,15 +380,15 @@ jobs:
             gpg --batch --verify "$1.sig" "$1"
           }
           for package in *.pkg.tar.zst; do sign "$package"; done
-          repo-add --include-sigs t1bridge.db.tar.zst ./*.pkg.tar.zst
-          cp --dereference t1bridge.db t1bridge.db.asset
-          cp --dereference t1bridge.files t1bridge.files.asset
-          unlink t1bridge.db
-          unlink t1bridge.files
-          mv t1bridge.db.asset t1bridge.db
-          mv t1bridge.files.asset t1bridge.files
-          sign t1bridge.db
-          sign t1bridge.files
+          repo-add --include-sigs standardagents.db.tar.zst ./*.pkg.tar.zst
+          cp --dereference standardagents.db standardagents.db.asset
+          cp --dereference standardagents.files standardagents.files.asset
+          unlink standardagents.db
+          unlink standardagents.files
+          mv standardagents.db.asset standardagents.db
+          mv standardagents.files.asset standardagents.files
+          sign standardagents.db
+          sign standardagents.files
           gpg --batch --armor --export "$SIGNING_FINGERPRINT" >t1bridge-signing-key.asc
           sha256sum *.PKGBUILD *.patch *.asc *.db *.db.tar.zst *.files \
             *.files.tar.zst *.pkg.tar.zst *.sig *.tar.gz \

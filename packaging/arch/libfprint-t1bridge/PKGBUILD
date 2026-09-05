@@ -1,9 +1,9 @@
 pkgname=libfprint-t1bridge
 pkgver=1.94.100
-pkgrel=7
+pkgrel=8
 pkgdesc='libfprint with Apple Touch ID support through T1Bridge'
 arch=('x86_64')
-url='https://github.com/andrew-boyd/t1bridge'
+url='https://github.com/standardagents/t1bridge'
 license=('LGPL-2.1-or-later' 'MIT')
 depends=(
   'libgcc'
