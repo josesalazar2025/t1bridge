@@ -15,7 +15,8 @@ macro_rules! labels {
         #[derive(Clone, Copy, Debug, Eq, PartialEq)]
         pub enum $name { $($variant),+ }
         impl $name {
-            const fn label(self) -> &'static str {
+            /// Returns the exact wire-format label this variant emits.
+            pub const fn label(self) -> &'static str {
                 match self { $(Self::$variant => $label),+ }
             }
         }
