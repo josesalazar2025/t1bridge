@@ -1,9 +1,8 @@
 # Manual setup
 
-This is a source-checked **pre-release guide**, not a completed installation
-test. No public package repository or signing key is available yet. The
-[release gate](release-gate/v1.md) tracks validation of these steps on the exact
-release packages.
+Start with the [official package installation instructions](../README.md#install-official-packages)
+for the public repository and signing key. This guide covers service activation,
+machine-data import, fingerprint management, desktop integration and recovery.
 
 The supplied packages currently target x86_64 Arch Linux with systemd; other
 distributions need their own packaging.
@@ -15,7 +14,7 @@ Keep a working password login and back up the disk before changing boot
 configuration. Preserve the Apple EFI partition: it contains machine-specific
 data needed by Touch ID. Do not format it as part of installing Linux.
 
-Install these packages from the same verified candidate build:
+Install these packages together from the official repository:
 
 | Package | Purpose |
 | --- | --- |
@@ -25,9 +24,9 @@ Install these packages from the same verified candidate build:
 | `fprintd-t1bridge` | Matching fprintd integration and command-line tools |
 
 The last two replace the distribution's libfprint/fprintd system-wide and must
-stay a matched pair. They are optional for Touch Bar-only use. Verify package
-signatures through the release's published trust instructions when available;
-do not disable signature checks. Install headers matching the kernel you will
+stay a matched pair. They are optional for Touch Bar-only use. Use the
+[published signing key](../README.md#1-trust-the-signing-key); do not disable
+signature checks. Install headers matching the kernel you will
 boot, and confirm DKMS and the normal initramfs generation complete successfully.
 
 From your normal user account, after package installation:
