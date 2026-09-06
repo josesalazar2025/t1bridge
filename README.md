@@ -31,12 +31,15 @@ No source build, GitHub authentication, or download token is required.
 | MacBook Pro | Model identifier | Hardware testing |
 | --- | --- | --- |
 | 2016, 13-inch with Touch Bar | `MacBookPro13,2` | 🟡 Targeted; awaiting tester confirmation |
-| 2016, 15-inch with Touch Bar | `MacBookPro13,3` | 🟢 Tested; function-specific limitations below |
+| 2016, 15-inch with Touch Bar | `MacBookPro13,3` | 🟢 Success confirmed on two machines; limitations below |
 | 2017, 13-inch with Touch Bar | `MacBookPro14,2` | 🟡 Targeted; awaiting tester confirmation |
-| 2017, 15-inch with Touch Bar | `MacBookPro14,3` | 🟡 Targeted; awaiting tester confirmation |
+| 2017, 15-inch with Touch Bar | `MacBookPro14,3` | 🔴 Enrollment failure reported; details pending |
 
-**Only MacBookPro13,3 has been hardware-tested.** The other T1 models are
-targets, not confirmed working configurations. Reports from testers are welcome
+**MacBookPro13,3 is the only model with confirmed success**, now reported on
+two machines. One MacBookPro14,3 tester reports enrollment failure; package
+versions, exact failing stage and logs are not yet available. This is not a
+diagnosed cause or evidence that every function on that model fails. The other
+models remain unconfirmed targets. Reports from testers are welcome
 through [GitHub issues](https://github.com/standardagents/t1bridge/issues);
 include your model, kernel/package versions and which functions work or fail,
 but no serial numbers or machine-specific EFI data.
