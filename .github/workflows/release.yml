@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       ci_sign:
-        description: Sign using an owner-approval-protected environment
+        description: Sign using the release environment
         required: true
         default: false
         type: boolean

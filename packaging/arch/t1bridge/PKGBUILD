@@ -9,7 +9,7 @@ depends=('gcc-libs' 'glibc' 'systemd>=256')
 makedepends=('cargo' 'pkgconf' 'rust' 'xz')
 options=('!debug')
 source=("${pkgname}-${pkgver}.tar.gz")
-sha256sums=('88f1cfa1d054d0e35c5610726f375ed0ef7cbd872bbfcec3082481f78be6d64e')
+sha256sums=('fba56f5f3ff8a03f37ca03306f06bfc68bdc3672f532453b51b1dba2a6e34ad8')
 
 build() {
 	local source_root="${srcdir}/${pkgname}-${pkgver}"

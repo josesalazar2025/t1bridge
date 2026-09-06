@@ -5,9 +5,8 @@ the install checks and signing job consume those same artifacts.
 
 ## GitHub signing
 
-The `release` environment permits workflow runs from `main` and requires
-approval from the maintainer. Administrator bypass is disabled. Self-approval
-is allowed so the maintainer can both start and approve a release.
+The `release` environment permits workflow runs from `main`, without a manual
+reviewer approval step. Administrator bypass is disabled.
 
 Only the replaceable signing subkey and its passphrase are environment secrets:
 `T1BRIDGE_SIGNING_SUBKEY` and `T1BRIDGE_SIGNING_SUBKEY_PASSPHRASE`.
@@ -23,8 +22,8 @@ as `T1BRIDGE_SIGNING_PRIMARY_FINGERPRINT` and
 3. Run **Release candidate** from the `main` branch, set `ref` to that tag,
    and enable `ci_sign`. The unsigned-only mode instead takes a full commit
    SHA and does not access signing secrets.
-4. After the single build and install checks, review the commit, tag and run
-   before approving the `release` environment. The signing job verifies the
+4. After the single build and install checks, signing starts automatically.
+   The signing job verifies the
    exact artifact manifest and tag signature, then signs packages and repository
    databases. It rejects an exported primary private key.
 5. Review the resulting **draft** GitHub release before publishing. This job
