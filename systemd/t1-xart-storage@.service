@@ -8,6 +8,7 @@ Before=t1bridge-keybag.service
 PropagatesStopTo=t1bridge-keybag.service
 
 [Service]
+EnvironmentFile=-/etc/t1bridge/diagnostics.conf
 Type=notify
 NotifyAccess=main
 ExecStart=/usr/lib/t1bridge/t1-xart-storage

@@ -5,6 +5,7 @@ After=sys-subsystem-net-devices-%i.device
 Before=t1-xart-storage@%i.service
 
 [Service]
+EnvironmentFile=-/etc/t1bridge/diagnostics.conf
 Type=oneshot
 ExecStart=/usr/lib/t1bridge/t1-ncm-ready %I
 RemainAfterExit=yes

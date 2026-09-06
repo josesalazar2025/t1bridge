@@ -9,6 +9,7 @@ use std::net::{Ipv6Addr, SocketAddr, SocketAddrV6, TcpListener, TcpStream};
 use std::num::NonZeroU32;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd};
 use std::os::unix::ffi::OsStrExt;
+use t1_platform::diagnostics::{self as diagnostics, Component, Stage};
 
 use crate::xart_live_ffi;
 use crate::xart_service::{
@@ -142,7 +143,10 @@ impl std::error::Error for NcmReadyError {}
 pub fn prepare_ncm_link(expected_interface: &OsStr) -> Result<(), NcmReadyError> {
     let expected_interface =
         CString::new(expected_interface.as_bytes()).map_err(|_| NcmReadyError::InvalidOperation)?;
-    xart_live_ffi::prepare_ncm_link(&expected_interface).map_err(map_ready_status)
+    xart_live_ffi::prepare_ncm_link(&expected_interface).map_err(|status| {
+        diagnostics::native(Component::Ncm, Stage::NcmPrepare, status);
+        map_ready_status(status)
+    })
 }
 
 /// Redacted live-boundary or admitted-session failure.
@@ -202,8 +206,10 @@ impl DynamicXartListener {
     /// Returns a static error when discovery is absent, ambiguous, malformed,
     /// or exceeds its bound, or when socket creation/binding cannot be proven.
     pub fn discover_and_bind() -> Result<Self, XartLiveError> {
-        let opened = xart_live_ffi::open_listener()
-            .map_err(|status| XartLiveError::Listener(map_status(status)))?;
+        let opened = xart_live_ffi::open_listener().map_err(|status| {
+            diagnostics::native(Component::Xart, Stage::XartBind, status);
+            XartLiveError::Listener(map_status(status))
+        })?;
         let interface =
             checked_interface(Ok(opened.interface_index)).map_err(XartLiveError::Listener)?;
         let descriptor = InterfaceDescriptor::new(
@@ -238,8 +244,12 @@ impl DynamicXartListener {
     /// can retry. Permanent listener, admission, and session failures remain
     /// endpoint- and payload-redacted.
     pub fn serve_next(&self, store: &XartStore) -> Result<(), XartLiveError> {
-        let accepted = xart_live_ffi::accept(self.listener.as_raw_fd())
-            .map_err(|status| XartLiveError::Listener(map_status(status)))?;
+        let accepted = xart_live_ffi::accept(self.listener.as_raw_fd()).map_err(|status| {
+            if !matches!(status, 11 | 12) {
+                diagnostics::native(Component::Xart, Stage::XartAccept, status);
+            }
+            XartLiveError::Listener(map_status(status))
+        })?;
         let peer = SocketAddr::V6(SocketAddrV6::new(
             Ipv6Addr::from(accepted.peer_address),
             accepted.peer_port,
@@ -247,17 +257,21 @@ impl DynamicXartListener {
             accepted.peer_scope_id,
         ));
         let observation = PeerObservation::new(accepted.listener_interface_index, peer);
-        self.lifecycle
-            .with_admitted_peer(self.lease, observation, || ())
-            .map_err(XartLiveError::Admission)?;
+        diagnostics::observe(Component::Xart, Stage::SessionAdmission, || {
+            self.lifecycle
+                .with_admitted_peer(self.lease, observation, || ())
+        })
+        .map_err(XartLiveError::Admission)?;
 
-        serve_admitted_tcp_connection(
-            TcpStream::from(accepted.descriptor),
-            &self.lifecycle,
-            self.lease,
-            accepted.listener_interface_index,
-            store,
-        )
+        diagnostics::observe(Component::Xart, Stage::XartSession, || {
+            serve_admitted_tcp_connection(
+                TcpStream::from(accepted.descriptor),
+                &self.lifecycle,
+                self.lease,
+                accepted.listener_interface_index,
+                store,
+            )
+        })
         .map_err(XartLiveError::Connection)
     }
 

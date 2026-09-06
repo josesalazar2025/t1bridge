@@ -175,6 +175,11 @@ where
         &cancellation_predicate,
         ready,
     );
+    crate::diagnostics::native(
+        crate::diagnostics::Component::Sep,
+        crate::diagnostics::Stage::SepLease,
+        status,
+    );
     if status != 0 {
         return Err(SepOperationError::from_status(status));
     }
@@ -339,6 +344,11 @@ where
             Some(callback(AuthorizedCredential(credential)))
         },
     );
+    crate::diagnostics::native(
+        crate::diagnostics::Component::Sep,
+        crate::diagnostics::Stage::SepLease,
+        status,
+    );
     if status != 0 {
         return Err(SepOperationError::from_status(status));
     }
@@ -424,6 +434,11 @@ where
         );
     let output = output
         .and_then(|(disposition, operation)| operation.map(|operation| (disposition, operation)));
+    crate::diagnostics::native(
+        crate::diagnostics::Component::Sep,
+        crate::diagnostics::Stage::SepLease,
+        status,
+    );
     prepared_lease_outcome(status, preparation_error, output, prepared_released)
 }
 
@@ -471,6 +486,11 @@ where
             let disposition = disposition_from_raw(disposition)?;
             Some(callback(disposition, AuthorizedCredential(credential)))
         },
+    );
+    crate::diagnostics::native(
+        crate::diagnostics::Component::Sep,
+        crate::diagnostics::Stage::SepLease,
+        status,
     );
     lease_outcome(
         status,
@@ -564,6 +584,11 @@ where
         audit_uid,
         &cancellation.cancelled,
         |credential| callback(AuthorizedCredential(credential)),
+    );
+    crate::diagnostics::native(
+        crate::diagnostics::Component::Sep,
+        crate::diagnostics::Stage::SepLease,
+        status,
     );
     if status != 0 {
         return Err(SepOperationError::from_status(status));

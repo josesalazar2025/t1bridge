@@ -10,6 +10,7 @@ use t1_import::runtime::{
     ProtectedImportError, attempt_protected_import, attempt_protected_import_from_backup,
 };
 use t1_import::status::{StatusError, inspect};
+use t1_platform::diagnostics::{self, Component, Stage};
 use t1_platform::preserved_efi_discovery;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -49,22 +50,37 @@ impl From<ExitCategory> for ExitCode {
 }
 
 fn main() -> ExitCode {
-    let Some(command) = parse_command(std::env::args_os()) else {
+    let mut arguments: Vec<_> = std::env::args_os().collect();
+    if arguments
+        .get(1)
+        .is_some_and(|argument| argument == "--diagnostics")
+    {
+        diagnostics::enable();
+        arguments.remove(1);
+    }
+    let Some(command) = parse_command(arguments) else {
         eprintln!(
-            "usage: t1bridge machine-data import [--from ABSOLUTE_PATH] | enroll | match | status | validate usb-cycle | validate usb-live-loss"
+            "usage: t1bridge [--diagnostics] machine-data import [--from ABSOLUTE_PATH] | enroll | match | status | validate usb-cycle | validate usb-live-loss"
         );
         return ExitCategory::Usage.into();
     };
     let is_root = preserved_efi_discovery::is_root();
     if !authority_allows(&command, is_root) {
+        diagnostics::native(
+            Component::Importer,
+            Stage::Authority,
+            ExitCategory::Permission as i32,
+        );
         eprintln!("t1bridge: {}", authority_error(&command));
         return ExitCategory::Permission.into();
     }
-    match run(command) {
+    match diagnostics::observe(Component::Importer, Stage::Startup, || run(command)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(CommandError::Import(error)) => {
             eprintln!("t1bridge: {error}");
-            category_for_error(error).into()
+            let category = category_for_error(error);
+            diagnostics::native(Component::Importer, Stage::Import, category as i32);
+            category.into()
         }
         Err(CommandError::TouchId(error)) => {
             eprintln!("t1bridge: {error}");

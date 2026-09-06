@@ -5,6 +5,7 @@ use std::fmt;
 use std::os::fd::{AsFd, OwnedFd};
 use std::time::{Duration, Instant};
 
+use t1_platform::diagnostics::{Component, Stage, observe};
 use t1_platform::frame_memfd::ReadOnlyFrame;
 use t1_platform::seqpacket::{
     SeqPacketClient, SeqPacketError, SystemdActivation, SystemdSeqPacketListener,
@@ -307,15 +308,20 @@ pub fn run() -> Result<(), ServiceError> {
     let listener = SystemdSeqPacketListener::adopt(activation, SOCKET_PATH)
         .map_err(|_| ServiceError::Listener)?;
 
-    let mut display = TouchBarDisplay::open().map_err(ServiceError::Display)?;
+    let mut display = observe_hardware(Stage::DisplayOpen, TouchBarDisplay::open)
+        .map_err(ServiceError::Display)?;
     let (dimensions, layout, mut snapshot) = frame_setup(&display)?;
 
-    let mut digitizer = TouchBarDigitizer::open().map_err(|_| ServiceError::Input)?;
-    let mut function = TouchBarFnInput::open().map_err(|_| ServiceError::Input)?;
+    let mut digitizer = observe_hardware(Stage::DigitizerOpen, TouchBarDigitizer::open)
+        .map_err(|_| ServiceError::Input)?;
+    let mut function =
+        observe_hardware(Stage::FnOpen, TouchBarFnInput::open).map_err(|_| ServiceError::Input)?;
     let initial_fn = function.pressed().map_err(|_| ServiceError::Input)?;
-    let mut keyboard = TouchBarKeyboard::create().map_err(|_| ServiceError::Keyboard)?;
+    let mut keyboard = observe_hardware(Stage::KeyboardCreate, TouchBarKeyboard::create)
+        .map_err(|_| ServiceError::Keyboard)?;
     let mut actions = HardwareActions::discover();
-    let mut session = TouchBarSessionWatch::new().map_err(|_| ServiceError::Session)?;
+    let mut session = observe_hardware(Stage::SessionWatch, TouchBarSessionWatch::new)
+        .map_err(|_| ServiceError::Session)?;
     let origin = Instant::now();
     let mut last_session_check = origin;
     let mut input_state = InputState::new(dimensions, initial_fn);
@@ -339,6 +345,12 @@ pub fn run() -> Result<(), ServiceError> {
         if let Some(active) = connection.as_mut()
             && flush_connection(active, &mut display, &mut snapshot, dimensions).is_err()
         {
+            t1_platform::diagnostics::emit(t1_platform::diagnostics::Record::new(
+                Component::TouchbarHardware,
+                Stage::Frame,
+                t1_platform::diagnostics::Outcome::Error,
+                None,
+            ));
             revoke(
                 &mut connection,
                 &mut session,
@@ -375,7 +387,10 @@ pub fn run() -> Result<(), ServiceError> {
         if connection.is_none()
             && listener.is_ready().map_err(|_| ServiceError::Listener)?
             && let Ok(descriptor) = listener.listener().accept()
-            && admit(&descriptor, &mut session).is_ok()
+            && observe(Component::TouchbarHardware, Stage::SessionAdmission, || {
+                admit(&descriptor, &mut session)
+            })
+            .is_ok()
         {
             connection = Some(Connection::new(descriptor, layout));
             last_session_check = Instant::now();
@@ -485,6 +500,10 @@ const fn client_interest(has_control: bool, has_input: bool) -> ClientInterest {
         readable: !has_control,
         writable: has_control || has_input,
     }
+}
+
+fn observe_hardware<T, E>(stage: Stage, operation: impl FnOnce() -> Result<T, E>) -> Result<T, E> {
+    observe(Component::TouchbarHardware, stage, operation)
 }
 
 fn admit(descriptor: &OwnedFd, session: &mut TouchBarSessionWatch) -> Result<(), ()> {
@@ -899,6 +918,12 @@ fn revoke(
     input_state: &mut InputState,
     origin: Instant,
 ) -> Result<(), ServiceError> {
+    t1_platform::diagnostics::emit(t1_platform::diagnostics::Record::new(
+        Component::TouchbarHardware,
+        Stage::SessionRevocation,
+        t1_platform::diagnostics::Outcome::Begin,
+        None,
+    ));
     if let Some(mut active) = connection.take() {
         active.disconnect();
     }

@@ -3,6 +3,7 @@ Description=T1Bridge automatic Apple machine-data import
 After=systemd-tmpfiles-setup.service systemd-udev-trigger.service
 
 [Service]
+EnvironmentFile=-/etc/t1bridge/diagnostics.conf
 Type=oneshot
 ExecStart=/usr/bin/t1bridge machine-data import
 User=root

@@ -54,6 +54,11 @@ pub fn is_root() -> bool {
 /// failure.
 pub fn discover_roots() -> Result<Vec<OwnedFd>, Error> {
     let (status, roots) = ffi::discover_preserved_efi_roots(ROOT_LIMIT);
+    crate::diagnostics::native(
+        crate::diagnostics::Component::Efi,
+        crate::diagnostics::Stage::EfiDiscovery,
+        status,
+    );
     check(status)?;
     roots.ok_or(Error::InspectionFailed)
 }

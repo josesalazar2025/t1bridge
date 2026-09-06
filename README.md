@@ -219,5 +219,6 @@ user-selected programs, not bundled presets.
 
 See [contributing](CONTRIBUTING.md) for development and bug reports, and
 [security reporting](SECURITY.md) for private vulnerability reports.
+For import, Touch ID, or Touch Bar failures, see [opt-in shareable diagnostics](docs/diagnostics.md).
 
 Maintained by Andrew Boyd.

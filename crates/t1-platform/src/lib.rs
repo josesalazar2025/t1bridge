@@ -1,5 +1,6 @@
 //! Audited safe wrappers around `T1Bridge`'s focused Linux C boundaries.
 
+pub mod diagnostics;
 #[allow(unsafe_code)]
 mod ffi;
 

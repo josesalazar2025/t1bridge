@@ -76,6 +76,11 @@ impl fmt::Debug for OpenedPreservedFdr {
 /// inspection result is invalid or unavailable.
 pub fn open_fdr(root: BorrowedFd<'_>) -> Result<OpenedPreservedFdr, Error> {
     let (status, opened) = ffi::open_preserved_fdr(root.as_raw_fd());
+    crate::diagnostics::native(
+        crate::diagnostics::Component::Efi,
+        crate::diagnostics::Stage::EfiOpen,
+        status,
+    );
     check(status)?;
     let (descriptor, size) = opened.ok_or(Error::InspectionFailed)?;
     Ok(OpenedPreservedFdr { descriptor, size })
@@ -92,6 +97,11 @@ pub fn open_backup(path: &std::path::Path) -> Result<OpenedPreservedFdr, Error> 
     let path =
         std::ffi::CString::new(path.as_os_str().as_bytes()).map_err(|_| Error::InvalidArgument)?;
     let (status, opened) = ffi::open_preserved_backup(&path);
+    crate::diagnostics::native(
+        crate::diagnostics::Component::Efi,
+        crate::diagnostics::Stage::EfiOpen,
+        status,
+    );
     check(status)?;
     let (descriptor, size) = opened.ok_or(Error::InspectionFailed)?;
     Ok(OpenedPreservedFdr { descriptor, size })

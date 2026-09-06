@@ -63,8 +63,12 @@ pub fn attempt_protected_import_from_open_roots<I>(
 where
     I: IntoIterator<Item = OwnedFd>,
 {
-    let storage =
-        MachineDataStorage::open().map_err(|_| ProtectedImportError::StorageUnavailable)?;
+    let storage = t1_platform::diagnostics::observe(
+        t1_platform::diagnostics::Component::Importer,
+        t1_platform::diagnostics::Stage::StorageOpen,
+        MachineDataStorage::open,
+    )
+    .map_err(|_| ProtectedImportError::StorageUnavailable)?;
     attempt_import_from_open_roots(LiveT1AssociationSource, storage, roots)
         .map_err(ProtectedImportError::Import)
 }
@@ -79,8 +83,12 @@ where
 ///
 /// Returns only redaction-safe storage, source, selection, or commit failures.
 pub fn attempt_protected_import() -> Result<CommitOutcome, ProtectedImportError> {
-    let mut storage =
-        MachineDataStorage::open().map_err(|_| ProtectedImportError::StorageUnavailable)?;
+    let mut storage = t1_platform::diagnostics::observe(
+        t1_platform::diagnostics::Component::Importer,
+        t1_platform::diagnostics::Stage::StorageOpen,
+        MachineDataStorage::open,
+    )
+    .map_err(|_| ProtectedImportError::StorageUnavailable)?;
     let preserved = EnumeratedPreservedRecordReader::new(SystemPreservedSourceEnumeration::new());
     let mut source = DirectMatchingRecordSource::new(LiveT1AssociationSource, preserved);
     attempt_automatic_import(&mut source, &mut storage).map_err(ProtectedImportError::Import)
@@ -93,8 +101,12 @@ pub fn attempt_protected_import() -> Result<CommitOutcome, ProtectedImportError>
 pub fn attempt_protected_import_from_backup(
     path: &Path,
 ) -> Result<CommitOutcome, ProtectedImportError> {
-    let storage =
-        MachineDataStorage::open().map_err(|_| ProtectedImportError::StorageUnavailable)?;
+    let storage = t1_platform::diagnostics::observe(
+        t1_platform::diagnostics::Component::Importer,
+        t1_platform::diagnostics::Stage::StorageOpen,
+        MachineDataStorage::open,
+    )
+    .map_err(|_| ProtectedImportError::StorageUnavailable)?;
     attempt_import_from_backup(LiveT1AssociationSource, storage, path)
         .map_err(ProtectedImportError::Import)
 }

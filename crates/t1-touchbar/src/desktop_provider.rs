@@ -271,9 +271,16 @@ fn take_action(actions: &ActionMailbox, deadline: Instant) -> Option<DesktopActi
 }
 
 fn report_availability(previous: &mut Option<bool>, current: bool) {
+    use t1_platform::diagnostics::{Component, Outcome, Record, Stage, emit};
     if *previous == Some(current) {
         return;
     }
+    emit(Record::new(
+        Component::Provider,
+        Stage::ProviderStatus,
+        if current { Outcome::Ok } else { Outcome::Error },
+        None,
+    ));
     if !current {
         eprintln!("t1-touchbar: configured desktop provider is unavailable");
     }
@@ -294,7 +301,12 @@ enum ProviderOperation {
 fn run_action(path: &Path, operation: ProviderOperation) -> Result<(), DesktopProviderError> {
     let arguments = action_arguments(operation);
     let borrowed: Vec<_> = arguments.iter().map(OsString::as_os_str).collect();
-    run_provider(path, &borrowed, false).map(|_| ())
+    t1_platform::diagnostics::observe(
+        t1_platform::diagnostics::Component::Provider,
+        t1_platform::diagnostics::Stage::ProviderAction,
+        || run_provider(path, &borrowed, false),
+    )
+    .map(|_| ())
 }
 
 fn action_arguments(operation: ProviderOperation) -> Vec<OsString> {

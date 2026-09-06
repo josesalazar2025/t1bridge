@@ -234,7 +234,11 @@ where
                 mut reader,
                 byte_len,
             } = source;
-            match read_direct_fdr_calibration(&mut reader, byte_len, association) {
+            match t1_platform::diagnostics::observe(
+                t1_platform::diagnostics::Component::Importer,
+                t1_platform::diagnostics::Stage::EfiParse,
+                || read_direct_fdr_calibration(&mut reader, byte_len, association),
+            ) {
                 Ok(record) => records.push(record),
                 Err(ImportError::Fdr(fdr::Error::MissingModuleRecord)) => {}
                 Err(error) => return Err(map_import_error(error)),

@@ -73,7 +73,11 @@ pub fn run_forever(provider_path: Option<&Path>) {
     let provider = provider_path.and_then(DesktopProvider::start);
     let mut delay = INITIAL_RECONNECT_DELAY;
     loop {
-        if let Err(error) = run_once(provider.as_ref()) {
+        if let Err(error) = t1_platform::diagnostics::observe(
+            t1_platform::diagnostics::Component::Renderer,
+            t1_platform::diagnostics::Stage::RendererConnect,
+            || run_once(provider.as_ref()),
+        ) {
             eprintln!("t1-touchbar: {error}; reconnecting");
         }
         thread::sleep(delay);

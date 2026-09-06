@@ -6,6 +6,7 @@ After=dev-dri-touchbar.device t1-touchbar-hw.socket
 StartLimitIntervalSec=0
 
 [Service]
+EnvironmentFile=-/etc/t1bridge/diagnostics.conf
 Type=simple
 ExecStart=/usr/lib/t1bridge/t1-touchbar-hw
 Sockets=t1-touchbar-hw.socket

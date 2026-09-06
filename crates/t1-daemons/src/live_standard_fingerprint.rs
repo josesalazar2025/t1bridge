@@ -14,7 +14,7 @@ use t1_bridge::enroll_workflow::EnrollmentError;
 use t1_bridge::live_operation::{
     CallbackEventError, LiveBiometricError, LiveBridgeConnection, LiveBridgeInterrupt,
     LiveClientPreparationError, LiveConnectionError, LivePolicyRetryRuntime,
-    PreparedLiveBridgeConnection, live_biometric_native_status,
+    PreparedLiveBridgeConnection, bridge_command_native_status, live_biometric_native_status,
 };
 use t1_bridge::match_workflow::{IdentityMatchOutcome, MatchOutcome, MatchWorkflowError};
 use t1_bridge::policy::BiometricUserId;
@@ -45,6 +45,7 @@ use crate::enrollment_transaction::standard_enrollment::{
     PreparedStandardEnrollment, StandardEnrollmentError, StandardEnrollmentPreparationError,
     prepare_standard_enrollment, run_reserved_standard_enrollment,
 };
+use crate::fingerprint_diagnostics::DiagnosticTransport;
 use crate::identity_lifecycle::{IdentityRemovalCommandError, IdentityRemovalError};
 use crate::keybag_relay::SystemctlKeybagRelay;
 use crate::machine_data::{MachineCalibration, read_machine_calibration};
@@ -67,6 +68,7 @@ use crate::standard_query_policy::{
     StandardMatchOutcome, evaluate_identify, evaluate_verify, validate_verify_request,
 };
 use crate::xart_live::ValidatedNcmInterface;
+use t1_platform::diagnostics::{self as diagnostics, Component, Stage as Phase};
 
 const STATE_DIRECTORY: &str = "/var/lib/t1bridge/touch-id/catacombs";
 const RELAY_CONTROL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -231,7 +233,12 @@ impl StandardOperationRuntime for LiveStandardRuntime {
         }
         let pair_store = CatacombPairStore::new(STATE_DIRECTORY);
         let owner_store = EnrollmentOwnerStore::new(STATE_DIRECTORY);
-        load_committed_standard_list(&pair_store, &owner_store).map_or_else(
+        t1_platform::diagnostics::observe(
+            t1_platform::diagnostics::Component::Broker,
+            Phase::List,
+            || load_committed_standard_list(&pair_store, &owner_store),
+        )
+        .map_or_else(
             |_| terminal(TerminalOutcome::Error),
             |list| {
                 if active.is_cancelled() {
@@ -250,10 +257,10 @@ impl StandardOperationRuntime for LiveStandardRuntime {
         finger: FingerLabel,
         progress: &mut dyn FnMut(EnrollProgress),
     ) -> ServerMessage {
-        map_failure(
+        let result = diagnostics::observe(Component::Broker, Phase::Enroll, || {
             run_live_enroll(active, account, finger, progress)
-                .map(|identity| terminal(TerminalOutcome::Enrolled(identity))),
-        )
+        });
+        map_failure(result.map(|identity| terminal(TerminalOutcome::Enrolled(identity))))
     }
 
     fn verify(
@@ -262,7 +269,14 @@ impl StandardOperationRuntime for LiveStandardRuntime {
         account: &ResolvedStandardAccount,
         identity: IdentityId,
     ) -> ServerMessage {
-        map_failure(run_live_query(active, account, Some(identity)).map(match_message))
+        map_failure(
+            t1_platform::diagnostics::observe(
+                t1_platform::diagnostics::Component::Broker,
+                Phase::Match,
+                || run_live_query(active, account, Some(identity)),
+            )
+            .map(match_message),
+        )
     }
 
     fn identify(
@@ -270,7 +284,14 @@ impl StandardOperationRuntime for LiveStandardRuntime {
         active: &ActiveStandardOperation,
         account: &ResolvedStandardAccount,
     ) -> ServerMessage {
-        map_failure(run_live_query(active, account, None).map(match_message))
+        map_failure(
+            t1_platform::diagnostics::observe(
+                t1_platform::diagnostics::Component::Broker,
+                Phase::Match,
+                || run_live_query(active, account, None),
+            )
+            .map(match_message),
+        )
     }
 
     fn delete(
@@ -280,8 +301,12 @@ impl StandardOperationRuntime for LiveStandardRuntime {
         identity: IdentityId,
     ) -> ServerMessage {
         map_failure(
-            run_live_delete(active, account, identity)
-                .map(|()| terminal(TerminalOutcome::Completed)),
+            t1_platform::diagnostics::observe(
+                t1_platform::diagnostics::Component::Broker,
+                Phase::Delete,
+                || run_live_delete(active, account, identity),
+            )
+            .map(|()| terminal(TerminalOutcome::Completed)),
         )
     }
 }
@@ -300,7 +325,9 @@ fn run_live_enroll(
         SystemctlKeybagRelay::new(RELAY_CONTROL_TIMEOUT).map_err(|_| LiveStandardFailure::Error)?;
 
     let result = with_standard_cancellation(active, environment.interface, |cancellation| {
-        prepare_enrollment_relay(&mut relay, cancellation.sep())?;
+        diagnostics::observe(Component::Broker, Phase::Relay, || {
+            prepare_enrollment_relay(&mut relay, cancellation.sep())
+        })?;
         if standard_operation_cancelled(active, cancellation) {
             return Err(LiveStandardFailure::Cancelled);
         }
@@ -323,9 +350,14 @@ fn run_live_enroll(
                     let mut enrollment = None;
                     let connection = connection
                         .prepare(request_ids, |transport| {
+                            let mut transport = DiagnosticTransport::new(
+                                transport,
+                                Phase::Preparation,
+                                bridge_command_native_status,
+                            );
                             enrollment = Some(
                                 prepare_standard_enrollment(
-                                    transport,
+                                    &mut transport,
                                     &pair_store,
                                     user_id,
                                     environment.calibration.as_bytes(),
@@ -418,6 +450,11 @@ fn run_prepared_enrollment(
         }
         progress(event);
     };
+    let mut transport = DiagnosticTransport::new(
+        &mut transport,
+        Phase::Transaction,
+        live_biometric_native_status,
+    );
     match run_reserved_standard_enrollment(
         &mut transport,
         &mut retry_runtime,
@@ -571,6 +608,8 @@ fn run_prepared_match(
             standard_operation_cancelled(active, cancellation)
         })
         .map_err(|_| LiveStandardFailure::Error)?;
+    let mut transport =
+        DiagnosticTransport::new(&mut transport, Phase::Match, live_biometric_native_status);
     let mut retry_runtime = LivePolicyRetryRuntime::new();
     let prepared_user = restore_user_after_calibration::<_, _, CallbackEventError>(
         &mut transport,
@@ -710,6 +749,8 @@ fn run_prepared_delete(
         })
         .map_err(|_| LiveStandardFailure::Error)?;
     let user_id = biometric_user(active)?;
+    let mut transport =
+        DiagnosticTransport::new(&mut transport, Phase::Delete, live_biometric_native_status);
     let mut retry_runtime = LivePolicyRetryRuntime::new();
     let restored = restore_user_after_calibration::<_, _, Infallible>(
         &mut transport,
@@ -764,7 +805,12 @@ fn prepare_live_connection(
     let request_ids = LinuxRequestIdSource::open().map_err(|_| LiveStandardFailure::Error)?;
     connection
         .prepare(request_ids, |transport| {
-            ensure_fdr_calibration_loaded(transport, environment.calibration.as_bytes())
+            let mut transport = DiagnosticTransport::new(
+                transport,
+                Phase::Preparation,
+                bridge_command_native_status,
+            );
+            ensure_fdr_calibration_loaded(&mut transport, environment.calibration.as_bytes())
                 .map(|_| ())
                 .map_err(|_| LiveStandardFailure::Error)
         })

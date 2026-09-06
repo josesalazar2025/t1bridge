@@ -16,6 +16,8 @@ pub mod catacomb_store;
 pub mod enrollment_lifecycle;
 pub mod enrollment_owner;
 mod enrollment_transaction;
+#[cfg(feature = "auth-broker-service")]
+mod fingerprint_diagnostics;
 pub mod identity_lifecycle;
 pub mod identity_metadata;
 pub mod keybag_relay;

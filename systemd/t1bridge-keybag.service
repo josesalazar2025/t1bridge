@@ -3,6 +3,7 @@ Description=T1Bridge existing-keybag notification relay
 ConditionPathExists=/var/lib/t1bridge/touch-id/keybag.state
 
 [Service]
+EnvironmentFile=-/etc/t1bridge/diagnostics.conf
 Type=notify
 NotifyAccess=main
 ExecCondition=/usr/bin/systemctl --quiet is-active t1-xart-storage@*.service

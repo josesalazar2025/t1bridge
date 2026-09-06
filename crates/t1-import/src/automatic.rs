@@ -136,8 +136,13 @@ where
     Preserved: PreservedRecordReader,
 {
     fn read_matching_records(&mut self) -> Result<Vec<FdrCalibrationRecord>, SourceError> {
-        let mut session = self.live.open_read_only()?;
-        let association_result = session.read_association();
+        use t1_platform::diagnostics::{Component, Stage, observe};
+        let mut session = observe(Component::Importer, Stage::HardwareAssociation, || {
+            self.live.open_read_only()
+        })?;
+        let association_result = observe(Component::Importer, Stage::HardwareAssociation, || {
+            session.read_association()
+        });
         let close_result = session.close();
 
         let mut association = association_result?;
@@ -146,7 +151,9 @@ where
             return Err(error);
         }
 
-        let result = self.preserved.read_matching_records(&association);
+        let result = observe(Component::Importer, Stage::EfiRead, || {
+            self.preserved.read_matching_records(&association)
+        });
         association.fill(0);
         result
     }
@@ -202,11 +209,18 @@ where
     R: MatchingRecordSource,
     S: ImportCommitStorage,
 {
+    use t1_platform::diagnostics::{Component, Stage, observe};
     let records = source
         .read_matching_records()
         .map_err(AutomaticImportError::Source)?;
-    let record = select_matching_record(records).map_err(AutomaticImportError::Selection)?;
-    commit_fdr_calibration(storage, record).map_err(AutomaticImportError::Commit)
+    let record = observe(Component::Importer, Stage::Selection, || {
+        select_matching_record(records)
+    })
+    .map_err(AutomaticImportError::Selection)?;
+    observe(Component::Importer, Stage::Commit, || {
+        commit_fdr_calibration(storage, record)
+    })
+    .map_err(AutomaticImportError::Commit)
 }
 
 #[cfg(test)]

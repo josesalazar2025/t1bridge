@@ -11,7 +11,11 @@ fn main() -> ExitCode {
         eprintln!("t1-ncm-ready: exactly one interface argument is required");
         return ExitCode::FAILURE;
     }
-    match t1_daemons::xart_live::prepare_ncm_link(&expected_interface) {
+    match t1_platform::diagnostics::observe(
+        t1_platform::diagnostics::Component::Ncm,
+        t1_platform::diagnostics::Stage::Startup,
+        || t1_daemons::xart_live::prepare_ncm_link(&expected_interface),
+    ) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("t1-ncm-ready: {error}");
