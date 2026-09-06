@@ -169,4 +169,9 @@ packages. Distribution integrations own installer preservation, automatic
 setup, menus, themes, and HUD integration. Custom Touch Bar renderers remain
 user-selected programs, not bundled presets.
 
+## Contributing and security
+
+See [contributing](CONTRIBUTING.md) for development and bug reports, and
+[security reporting](SECURITY.md) for private vulnerability reports.
+
 Maintained by Andrew Boyd.

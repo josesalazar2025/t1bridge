@@ -1,8 +1,7 @@
 # Current dependency surface
 
-This is the dependency and supported-version inventory for the current private
-tree. It distinguishes shipped runtime links from build and packaging tools.
-Final signed-build and hardware evidence remain separate release gates.
+This inventory distinguishes shipped runtime links from build and packaging
+tools. See the [README](../README.md) for official packages and function support.
 
 ## Runtime and linked dependencies
 
@@ -39,7 +38,7 @@ boundary.
 - The sanitizer quality target specifically uses GCC AddressSanitizer and
   UndefinedBehaviorSanitizer. These runtimes are test-only.
 - Kernel-module builds require Kbuild and headers matching the target kernel.
-  The draft Arch package depends on DKMS to compile and install the modules;
+  The Arch package depends on DKMS to compile and install the modules;
   DKMS and package-building tools are not T1Bridge userspace runtime links.
 
 No current code depends on crates.io packages, libusb, OpenSSL, an external
@@ -60,10 +59,10 @@ the all-targets test feature and is not included by the package recipe.
 
 The v1 packaging contract is intentionally narrow:
 
-- Distribution and architecture: current x86_64 Arch Linux and Omarchy releases based on it, using the supplied PKGBUILDs. Other distributions may package the source but are not part of the v1 tested support claim.
-- Kernel: the active T1 hardware target runs Arch kernel `7.1.9-arch1-2`; private CI compiles all four DKMS modules against Arch kernel headers `7.2.2-arch1-1`. The final signed candidate must repeat both the hardware runbook and current-Arch header build; versions outside that evidence are unverified rather than implicitly supported.
+- Distribution and architecture: x86_64 Arch Linux and Arch-based distributions, using the official signed packages. Other distributions may package the source but are not part of the v1 tested support claim.
+- Kernel: recorded hardware validation uses Arch kernel `7.1.9-arch1-2`; CI also compiled all four DKMS modules against Arch kernel headers `7.2.2-arch1-1`. These are tested versions, not a guarantee for every kernel; install headers matching the target kernel and check DKMS results.
 - Init and device stack: systemd 256 or newer is required by the core package. The current hardware evidence uses systemd 261.2.
-- Rust: 1.88 is the declared minimum. `cargo +1.88.0 test --locked --workspace --all-targets --all-features` passes on the current private source; private CI also passes with Arch Rust 1.98.
+- Rust: 1.88 is the declared minimum. Recorded checks pass `cargo +1.88.0 test --locked --workspace --all-targets --all-features`; CI also passes with Arch Rust 1.98.
 - Native toolchain: C17 and matching kernel Kbuild headers are required. The active development build uses GCC 16.2.1. CI pins its container image, while the installed Arch compiler, Rust toolchain, and kernel headers are point-in-time versions recorded by each run because both workflows update from their configured package mirrors.
 - XZ: the build and all-feature test gate uses the system `liblzma` headers and library from Arch `xz`; version 5.8.3 is tested. The current packaged runtime has no `liblzma` dynamic dependency.
 - Standard fingerprint stack: the matched compatibility pair is `libfprint-t1bridge 1.94.100-8` and `fprintd-t1bridge 1.94.5-5`. The fprintd package requires that exact T1Bridge libfprint package version and the libfprint 2 ABI.
@@ -77,7 +76,6 @@ packages, confirmed `liblzma` linkage in all-feature tests, confirmed its
 absence from a clean importer-only release build and the stripped package, and
 confirmed the kernel-module relationships listed above.
 
-The minimum-Rust run, current private CI, dynamic-link inspection, DKMS build
-logs, package manifests, and active-machine versions establish the matrix
-above. The final tag still needs its signed build and exact
-release-artifact hardware pass.
+The minimum-Rust run, CI, dynamic-link inspection, DKMS build logs, package
+manifests, and hardware observations establish the matrix above. An untested
+version or operation is not covered by those observations.

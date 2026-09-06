@@ -37,4 +37,5 @@ named new module. Treat the source-size guidance in
 Test behavior, contracts, state transitions, and failure modes. Assert exact
 text only when the text itself is the contract. `AGENTS.md` is canonical in
 every directory, and each one must have a sibling `CLAUDE.md` symlink targeting
-it. Run `make quality` before delivery.
+it. Run `make quality` for code changes before delivery. Documentation-only
+changes need link, command-syntax, and diff checks, not package rebuilds.

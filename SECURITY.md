@@ -1,7 +1,9 @@
 # Security policy
 
-T1Bridge is not yet released. Report suspected vulnerabilities privately to
-the repository owner through GitHub's private vulnerability reporting channel.
+Report suspected vulnerabilities through
+[GitHub private vulnerability reporting](https://github.com/standardagents/t1bridge/security/advisories/new),
+not a public issue. Include the affected package versions, impact, and redacted
+reproduction steps. Security fixes target the latest published package set.
 Do not include biometric state, machine data, hardware identifiers, or other
 sensitive artifacts in an issue or test fixture.
 
