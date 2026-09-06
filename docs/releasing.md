@@ -1,51 +1,43 @@
-# Private release candidates
+# Releasing packages
 
-The `Private release candidate` workflow builds only an existing signed
-`v<package-version>` tag. It creates one deterministic core source archive,
-requires both core PKGBUILDs to pin that archive's SHA-256, and builds the core,
-DKMS, libfprint, and fprintd compatibility packages twice. It stops unless all four
-unsigned packages are byte-identical. Both jobs use a pinned
-Arch container and one dated Arch Linux Archive snapshot so the toolchain and
-package inputs do not drift between runs.
+Documentation changes do not require new packages. Build each package once;
+the install checks and signing job consume those same artifacts.
 
-Before signing, the build job installs all four candidates in its disposable
-Arch container, applies their systemd presets and state declarations, reinstalls the
-second byte-identical build, deactivates the preset units, and removes all four
-packages. It requires package-owned files to disappear while protected machine
-data and user renderer selection remain.
+## GitHub signing
 
-Signing is a separate job using the `private-release` GitHub Environment. Before
-provisioning signing material, configure and verify required owner approval;
-the environment name alone provides no approval protection. Provision only a
-replaceable signing subkey, its passphrase, and the primary and subkey
-fingerprints. The job
-verifies the unsigned manifest before importing the subkey, verifies the exact
-primary and subkey fingerprints, requires the unchanged source tag to carry a
-valid signature from that key, signs the packages and pacman database, and then
-destroys the temporary keyring before creating a release. It refuses to create
-a release if the repository is public or the tag already has a release.
-Candidates remain drafts, so making the repository public later cannot expose
-one without a separate reviewed promotion after the release gate passes.
+The `release` environment permits workflow runs from `main` and requires
+approval from the maintainer. Administrator bypass is disabled. Self-approval
+is allowed so the maintainer can both start and approve a release.
 
-The owner-controlled primary package-signing key remains a passphrase-encrypted
-document in a private 1Password vault. It is never imported by CI or exposed to
-an automated CLI. Keep a separate encrypted recovery copy and revocation
-certificate. To rotate CI signing authority, add a new subkey and distribute
-the updated public key while releases still use the old subkey. Switch CI only
-after clients have imported it, then revoke the old subkey. If a key is
-compromised, stop releases and require the documented explicit key-refresh
-recovery path before resuming.
+Only the replaceable signing subkey and its passphrase are environment secrets:
+`T1BRIDGE_SIGNING_SUBKEY` and `T1BRIDGE_SIGNING_SUBKEY_PASSPHRASE`.
+The primary private key stays outside GitHub. Public fingerprints are stored
+as `T1BRIDGE_SIGNING_PRIMARY_FINGERPRINT` and
+`T1BRIDGE_SIGNING_SUBKEY_FINGERPRINT` environment variables.
 
-Required environment values:
+1. Update package versions/releases as needed and re-pin the source archive
+   in both core and DKMS recipes before committing. The workflow checks those
+   pins against the exact release tree.
+2. Create and push an annotated, signed `v<version>` tag matching the core
+   package version. Use the approved release key; do not move an existing tag.
+3. Run **Release candidate** from the `main` branch, set `ref` to that tag,
+   and enable `ci_sign`. The unsigned-only mode instead takes a full commit
+   SHA and does not access signing secrets.
+4. After the single build and install checks, review the commit, tag and run
+   before approving the `release` environment. The signing job verifies the
+   exact artifact manifest and tag signature, then signs packages and repository
+   databases. It rejects an exported primary private key.
+5. Review the resulting **draft** GitHub release before publishing. This job
+   does not upload to the package host; publishing to `linux.standardagents.ai`
+   remains a separate step using the signed artifacts, without rebuilding.
 
-- variable `T1BRIDGE_SIGNING_PRIMARY_FINGERPRINT` — exact uppercase primary
-  fingerprint that downstream clients pin and locally trust;
-- variable `T1BRIDGE_SIGNING_SUBKEY_FINGERPRINT` — exact uppercase fingerprint
-  of the secret signing subkey;
-- secret `T1BRIDGE_SIGNING_SUBKEY` — armored export containing the public
-  primary stub and only the replaceable secret signing subkey; and
-- secret `T1BRIDGE_SIGNING_SUBKEY_PASSPHRASE` — subkey export passphrase.
+Environment configuration and secret presence are not proof of a successful
+CI signing run. Confirm that first run before treating the path as validated.
 
-Private GitHub release assets are not anonymously consumable by pacman. The
-hosted clean-install acceptance remains open until an owner-approved private
-transport is selected or the Phase 5 gate authorizes public release assets.
+## Key custody and rotation
+
+Keep the encrypted primary key, recovery copy and revocation certificate
+outside CI. To rotate signing authority, add a replacement subkey and distribute
+the updated public key before switching CI. Revoke the old subkey after clients
+can verify its replacement. If a key is compromised, stop signing and require
+an explicit trusted-key refresh before resuming releases.

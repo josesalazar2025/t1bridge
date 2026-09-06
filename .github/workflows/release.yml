@@ -1,4 +1,4 @@
-name: Private release candidate
+name: Release candidate
 
 on:
   workflow_dispatch:
@@ -237,7 +237,7 @@ jobs:
     runs-on: ubuntu-24.04
     container: archlinux:base-devel@sha256:a26046b7363dad8e2614858f4313949ae9b05c9c5f31de343a54864b9e20806f
     timeout-minutes: 15
-    environment: private-release
+    environment: release
     permissions:
       contents: write
     env:
@@ -370,16 +370,15 @@ jobs:
           GNUPGHOME="$cleanup_home" gpgconf --kill all || true
           rm -rf -- "$cleanup_home"
 
-      - name: Publish private release assets
+      - name: Create signed draft release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          test "$(gh repo view "$GITHUB_REPOSITORY" --json visibility --jq .visibility)" = PRIVATE
           ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1
           gh release create "$TAG" release/* \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --draft \
             --title "T1Bridge ${TAG#v}" \
-            --notes "Private pre-release candidate. Not approved for publication."
+            --notes "Signed release candidate. Review the assets before publishing."
