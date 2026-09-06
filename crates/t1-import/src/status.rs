@@ -24,6 +24,12 @@ const ATTRIBUTE_LIMIT: u64 = 16;
 const USB_ENTRY_LIMIT: usize = 4_096;
 const JOURNAL_OUTPUT_LIMIT: u64 = 65_536;
 const DIAGNOSTIC_LINE_PREFIX: &str = "t1bridge-diagnostic ";
+/// The only units trusted as sources of `xart-admission` evidence. A plain
+/// message-text match is not provenance: any process could print a line that
+/// merely starts with [`DIAGNOSTIC_LINE_PREFIX`]. Scoping to these units'
+/// own journal entries is what makes the match trustworthy.
+const TRUSTED_BROKER_UNIT: &str = "t1-touchid-auth.service";
+const TRUSTED_XART_UNIT_GLOB: &str = "t1-xart-storage@*.service";
 
 /// Complete fixed-row administrative status report.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -130,19 +136,27 @@ impl fmt::Display for KeybagState {
 ///
 /// This is read-only and firewall-agnostic: it never inspects, changes, or
 /// names any firewall configuration, and it never claims a socket is
-/// "reachable" from a listener state alone. A listener with no recorded
-/// admission is unremarkable before diagnostics are enabled or before any
-/// enrollment or match has been attempted; only an attempted operation with
-/// zero recorded admissions is worth a hint.
+/// "reachable" or "listening" from a listener state alone -- this evidence
+/// comes only from the trusted broker and xART units' own diagnostic
+/// records, never from an inference about current process state. A boot with
+/// no recorded admission is unremarkable before diagnostics are enabled or
+/// before any enrollment or match has been attempted; only an attempted
+/// operation with zero recorded admissions is worth a hint. Absence of a
+/// record is never read as absence of the corresponding event: it may simply
+/// mean diagnostics were unavailable to inspect.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum XartAdmissionEvidence {
-    /// No diagnostic records exist for this boot. Diagnostics may be
-    /// disabled, or this boot may be too new for any to have been written.
+    /// No diagnostic records could be read for this boot. Diagnostics may be
+    /// disabled, this boot may be too new for any to have been written, or
+    /// the inspection itself failed, timed out, or was capped -- these are
+    /// indistinguishable from here, and none of them means no operation
+    /// happened.
     DiagnosticsUnavailable,
     /// Diagnostic records exist, but no enrollment or match was attempted.
     Unused,
-    /// An enrollment or match was attempted, but xART never recorded an
-    /// admitted session for it.
+    /// An enrollment or match was attempted at some point this boot, but no
+    /// xART admission was recorded at any point this boot. The two are not
+    /// correlated to the same attempt.
     NeverAdmitted,
     /// xART recorded at least one admitted session this boot.
     Admitted,
@@ -154,11 +168,11 @@ impl fmt::Display for XartAdmissionEvidence {
             Self::DiagnosticsUnavailable => "diagnostics unavailable",
             Self::Unused => "not yet attempted this boot",
             Self::NeverAdmitted => {
-                "listening; inbound reachability unverified -- an operation was \
-                 attempted but xART never admitted a session for it; check that \
-                 inbound TCP 61500 on the discovered T1 interface can reach this host"
+                "operation recorded; no xART admission recorded this boot -- if \
+                 xART is running, check that inbound TCP 61500 on the discovered \
+                 T1 interface can reach this host"
             }
-            Self::Admitted => "admission confirmed",
+            Self::Admitted => "admission recorded this boot",
         })
     }
 }
@@ -171,7 +185,6 @@ pub enum StatusError {
     NcmInspection,
     KeybagInspection,
     ServiceInspection,
-    DiagnosticsInspection,
 }
 
 impl fmt::Display for StatusError {
@@ -182,7 +195,6 @@ impl fmt::Display for StatusError {
             Self::NcmInspection => "NCM state could not be inspected",
             Self::KeybagInspection => "keybag state could not be inspected",
             Self::ServiceInspection => "service state could not be inspected",
-            Self::DiagnosticsInspection => "diagnostic records could not be inspected",
         })
     }
 }
@@ -195,7 +207,10 @@ trait StatusSource {
     fn ncm(&mut self) -> Result<AvailabilityState, StatusError>;
     fn keybag_exists(&mut self) -> Result<bool, StatusError>;
     fn service_ready(&mut self, service: Service) -> Result<bool, StatusError>;
-    fn xart_admission_evidence(&mut self) -> Result<XartAdmissionEvidence, StatusError>;
+    /// Never fails: an inspection that cannot positively confirm evidence
+    /// reports [`XartAdmissionEvidence::DiagnosticsUnavailable`] rather than
+    /// aborting the rest of the status report.
+    fn xart_admission_evidence(&mut self) -> XartAdmissionEvidence;
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -244,7 +259,7 @@ impl StatusSource for SystemStatusSource {
         inspect_service(service)
     }
 
-    fn xart_admission_evidence(&mut self) -> Result<XartAdmissionEvidence, StatusError> {
+    fn xart_admission_evidence(&mut self) -> XartAdmissionEvidence {
         inspect_xart_admission_evidence()
     }
 }
@@ -267,7 +282,7 @@ fn inspect_with(source: &mut impl StatusSource) -> Result<StatusReport, StatusEr
     let drm = source.drm()?;
     let ncm = source.ncm()?;
     let xart = source.service_ready(Service::Xart)?.into();
-    let xart_admission_evidence = source.xart_admission_evidence()?;
+    let xart_admission_evidence = source.xart_admission_evidence();
     let keybag_exists = source.keybag_exists()?;
     let keybag_service = source.service_ready(Service::Keybag)?;
     let keybag = match (keybag_exists, keybag_service) {
@@ -395,11 +410,7 @@ fn inspect_service(service: Service) -> Result<bool, StatusError> {
     }
 }
 
-fn wait_for_child(
-    child: &mut Child,
-    deadline: Instant,
-    error: StatusError,
-) -> Result<ExitStatus, StatusError> {
+fn wait_for_child<E>(child: &mut Child, deadline: Instant, error: E) -> Result<ExitStatus, E> {
     loop {
         match child.try_wait() {
             Ok(Some(status)) => return Ok(status),
@@ -416,49 +427,62 @@ fn wait_for_child(
 /// Reads this boot's own diagnostic records and classifies xART admission
 /// evidence from them.
 ///
-/// Read-only: this runs `journalctl` scoped to the current boot and a fixed
-/// line-prefix filter, and never inspects, names, or changes any firewall
-/// configuration. A bounded amount of output is read; exceeding it is an
-/// inspection failure rather than an unbounded read.
-fn inspect_xart_admission_evidence() -> Result<XartAdmissionEvidence, StatusError> {
-    let deadline = Instant::now()
-        .checked_add(JOURNAL_INSPECTION_TIMEOUT)
-        .ok_or(StatusError::DiagnosticsInspection)?;
-    let mut child = Command::new(JOURNALCTL)
-        .args([
-            "-b",
-            "--no-pager",
-            "-o",
-            "cat",
-            "--grep",
-            &format!("^{DIAGNOSTIC_LINE_PREFIX}"),
-        ])
-        .env_clear()
-        .current_dir("/")
+/// Read-only: this runs `journalctl` scoped to the current boot, the trusted
+/// broker and xART units, and a fixed line-prefix filter, and never
+/// inspects, names, or changes any firewall configuration. Any outcome short
+/// of a clean, bounded read -- a spawn failure, `journalctl`'s own exit code
+/// of 1 when `--grep` matches nothing, exceeding the output bound, exceeding
+/// the deadline, or non-UTF-8 output -- is reported as
+/// [`XartAdmissionEvidence::DiagnosticsUnavailable`], never as a failure of
+/// the surrounding status report: this one row is best-effort by nature.
+fn inspect_xart_admission_evidence() -> XartAdmissionEvidence {
+    let mut command = Command::new(JOURNALCTL);
+    command.args(["-b", "--no-pager", "-o", "cat"]);
+    command.args(["-u", TRUSTED_BROKER_UNIT]);
+    command.args(["-u", TRUSTED_XART_UNIT_GLOB]);
+    command.args(["--grep", &format!("^{DIAGNOSTIC_LINE_PREFIX}")]);
+    command.env_clear().current_dir("/");
+    match run_bounded(command, JOURNAL_INSPECTION_TIMEOUT, JOURNAL_OUTPUT_LIMIT) {
+        Some(bytes) => match std::str::from_utf8(&bytes) {
+            Ok(text) => classify_xart_admission_evidence(text.lines()),
+            Err(_) => XartAdmissionEvidence::DiagnosticsUnavailable,
+        },
+        None => XartAdmissionEvidence::DiagnosticsUnavailable,
+    }
+}
+
+/// Runs `command` to completion and returns its stdout, bounded to `limit`
+/// bytes, or `None` for any outcome that isn't a clean, bounded, successful
+/// exit (spawn failure, non-zero exit, exceeding `limit`, exceeding
+/// `timeout`, or a stdout read failure).
+///
+/// Stdout is drained on a separate thread concurrently with waiting for the
+/// child, rather than after it: waiting first would let a child that writes
+/// more than one pipe buffer's worth of output before exiting block forever
+/// on a full pipe nobody is reading, turning legitimate large output into a
+/// spurious timeout.
+fn run_bounded(mut command: Command, timeout: Duration, limit: u64) -> Option<Vec<u8>> {
+    let deadline = Instant::now().checked_add(timeout)?;
+    let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|_| StatusError::DiagnosticsInspection)?;
-    let status = wait_for_child(&mut child, deadline, StatusError::DiagnosticsInspection)?;
-    if !status.success() {
-        return Err(StatusError::DiagnosticsInspection);
+        .ok()?;
+    let mut stdout = child.stdout.take()?;
+    let reader = thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let result = stdout.by_ref().take(limit + 1).read_to_end(&mut bytes);
+        (bytes, result)
+    });
+    // Waiting can kill the child on a timeout; that closes its stdout and
+    // unblocks the reader thread's read promptly either way.
+    let status = wait_for_child(&mut child, deadline, ()).ok()?;
+    let (bytes, read_result) = reader.join().ok()?;
+    if !status.success() || read_result.is_err() || bytes.len() as u64 > limit {
+        return None;
     }
-    let mut stdout = child
-        .stdout
-        .take()
-        .ok_or(StatusError::DiagnosticsInspection)?;
-    let mut bytes = Vec::new();
-    stdout
-        .by_ref()
-        .take(JOURNAL_OUTPUT_LIMIT + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| StatusError::DiagnosticsInspection)?;
-    if bytes.len() as u64 > JOURNAL_OUTPUT_LIMIT {
-        return Err(StatusError::DiagnosticsInspection);
-    }
-    let text = std::str::from_utf8(&bytes).map_err(|_| StatusError::DiagnosticsInspection)?;
-    Ok(classify_xart_admission_evidence(text.lines()))
+    Some(bytes)
 }
 
 /// Classifies xART admission evidence from already-read diagnostic lines.
@@ -537,7 +561,7 @@ mod tests {
         ncm: Result<AvailabilityState, StatusError>,
         keybag_exists: Result<bool, StatusError>,
         services: BTreeMap<&'static str, Result<bool, StatusError>>,
-        xart_admission_evidence: Result<XartAdmissionEvidence, StatusError>,
+        xart_admission_evidence: XartAdmissionEvidence,
     }
 
     impl StatusSource for FakeSource {
@@ -561,7 +585,7 @@ mod tests {
             self.services[service.unit()]
         }
 
-        fn xart_admission_evidence(&mut self) -> Result<XartAdmissionEvidence, StatusError> {
+        fn xart_admission_evidence(&mut self) -> XartAdmissionEvidence {
             self.xart_admission_evidence
         }
     }
@@ -580,7 +604,7 @@ mod tests {
             ]
             .into_iter()
             .collect(),
-            xart_admission_evidence: Ok(XartAdmissionEvidence::Admitted),
+            xart_admission_evidence: XartAdmissionEvidence::Admitted,
         }
     }
 
@@ -601,7 +625,7 @@ mod tests {
              drm: ready\n\
              ncm: ready\n\
              xart: ready\n\
-             xart-admission: admission confirmed\n\
+             xart-admission: admission recorded this boot\n\
              keybag: ready\n\
              broker: ready\n\
              touchbar: ready"
@@ -619,7 +643,7 @@ mod tests {
             .services
             .values_mut()
             .for_each(|state| *state = Ok(false));
-        source.xart_admission_evidence = Ok(XartAdmissionEvidence::DiagnosticsUnavailable);
+        source.xart_admission_evidence = XartAdmissionEvidence::DiagnosticsUnavailable;
 
         assert_eq!(
             inspect_with(&mut source).unwrap().to_string(),
@@ -642,13 +666,69 @@ mod tests {
     }
 
     #[test]
-    fn xart_admission_inspection_failure_is_not_flattened_into_unavailable() {
+    fn xart_admission_evidence_never_fails_the_surrounding_report() {
+        // Unlike every other row, this one is best-effort by construction: the
+        // trait method itself is infallible, so there is no error variant left
+        // to propagate. An inspection that can't positively confirm evidence
+        // reports DiagnosticsUnavailable and the rest of the report still
+        // comes through untouched.
         let mut source = source();
-        source.xart_admission_evidence = Err(StatusError::DiagnosticsInspection);
+        source.xart_admission_evidence = XartAdmissionEvidence::DiagnosticsUnavailable;
+        let report = inspect_with(&mut source).unwrap();
         assert_eq!(
-            inspect_with(&mut source),
-            Err(StatusError::DiagnosticsInspection)
+            report.xart_admission_evidence,
+            XartAdmissionEvidence::DiagnosticsUnavailable
         );
+        assert_eq!(report.xart, ReadinessState::Ready);
+    }
+
+    fn shell_command(script: &str) -> Command {
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", script]);
+        command
+    }
+
+    #[test]
+    fn run_bounded_reports_none_for_a_nonzero_exit_with_no_output() {
+        // Mirrors journalctl's own documented behavior: `--grep` with no match
+        // exits 1. That must not read as a hard failure -- see
+        // inspect_xart_admission_evidence, which folds this into
+        // DiagnosticsUnavailable rather than an error.
+        let command = shell_command("exit 1");
+        assert_eq!(run_bounded(command, Duration::from_secs(3), 64), None);
+    }
+
+    #[test]
+    fn run_bounded_drains_output_larger_than_a_pipe_without_deadlocking() {
+        // A typical pipe buffer is 64KiB; writing well past that before exiting
+        // would block the child on a full pipe if nobody reads until after
+        // wait() returns. This must complete well inside the timeout.
+        let oversized: u64 = 3 * 1024 * 1024;
+        let command = shell_command(&format!("head -c {oversized} /dev/zero"));
+        let started = Instant::now();
+        let result = run_bounded(command, Duration::from_secs(10), oversized - 1);
+        assert!(started.elapsed() < Duration::from_secs(5));
+        // Output exceeds the given limit, so this reports unavailable, not a
+        // truncated capture.
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn run_bounded_returns_bytes_within_the_limit() {
+        let command = shell_command("printf hello");
+        assert_eq!(
+            run_bounded(command, Duration::from_secs(3), 64),
+            Some(b"hello".to_vec())
+        );
+    }
+
+    #[test]
+    fn run_bounded_kills_a_child_that_outlives_the_deadline() {
+        let command = shell_command("sleep 30");
+        let started = Instant::now();
+        let result = run_bounded(command, Duration::from_millis(200), 64);
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(result, None);
     }
 
     #[test]
