@@ -14,9 +14,14 @@ Current coverage and remaining work are listed below.
 > backup actually contains that path; keeping only Linux boot files is not enough.
 >
 > **Without this data or a matching backup, T1Bridge cannot set up Touch ID.**
-> Re-enrolling fingerprints, reinstalling this package, another Mac's backup,
-> or a generic macOS installer cannot substitute for it. If you already erased
-> it, stop Touch ID setup and locate your original backup first.
+> Re-enrolling fingerprints, reinstalling this package, or another Mac's backup
+> cannot substitute for it.
+>
+> **Already erased it? Recovery is possible:** restore macOS on this Mac and
+> let it complete its first boot so the machine-specific EFI data is regenerated.
+> Merely downloading an installer or booting into Recovery is not enough.
+> Then verify and back up `EFI/APPLE/EMBEDDEDOS/FDRData` before returning to Linux.
+> Back up your Linux data before restoring macOS; restoration can erase it.
 
 Install the official signed packages from **linux.standardagents.ai**.
 No source build, GitHub authentication, or download token is required.
@@ -75,6 +80,8 @@ hardware-enablement bundle.
 > **Before continuing: preserve the Apple EFI partition and verify an external
 > backup contains `EFI/APPLE/EMBEDDEDOS/FDRData`. Without this Mac's data,
 > Touch ID setup will not work. Do not format the partition.**
+> If it is already missing, restore macOS through a complete first boot,
+> then preserve and back up the regenerated EFI data before returning to Linux.
 
 Keep a working password login and back up your disk.
 

@@ -5,8 +5,13 @@
 > Preserve the Apple EFI partition and verify a backup on another device
 > contains `EFI/APPLE/EMBEDDEDOS/FDRData`. Do this before installing Linux or
 > formatting any partition. Without the original data or a matching backup,
-> T1Bridge cannot set up Touch ID. Re-enrollment, reinstalling packages, another
-> Mac's backup, and a generic macOS installer are not substitutes.
+> T1Bridge cannot set up Touch ID. Re-enrollment, reinstalling packages, and
+> another Mac's backup are not substitutes.
+>
+> **Missing the data? Restore macOS on this Mac through a complete first boot
+> to regenerate it.** Just booting Recovery or downloading the installer is
+> not enough. Verify and back up `EFI/APPLE/EMBEDDEDOS/FDRData` before returning
+> to Linux. Back up your Linux data first; restoring macOS can erase it.
 
 Start with the [official package installation instructions](../README.md#install-official-packages)
 for the public repository and signing key. This guide covers service activation,
@@ -103,8 +108,10 @@ resetting hardware or deleting state.
 
 Compressed backups and macOS installer/disk-image containers are not accepted
 by this command yet. Extract a backup you control first; do not copy guessed
-records into protected storage. A generic macOS installer is not guaranteed
-to contain your machine's calibration data.
+records into protected storage. An installer archive is not this Mac's
+calibration backup. If the data was lost, restore macOS on this Mac and complete
+its first boot, then preserve and back up the regenerated EFI data. This is a
+macOS recovery procedure, not something the T1Bridge importer performs.
 
 ## Enroll and verify
 
