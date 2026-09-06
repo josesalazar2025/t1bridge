@@ -28,12 +28,18 @@ No source build, GitHub authentication, or download token is required.
 
 ## Supported hardware
 
-| MacBook Pro | Model identifiers |
-| --- | --- |
-| 2016, 13-inch with Touch Bar | `MacBookPro13,2` |
-| 2016, 15-inch with Touch Bar | `MacBookPro13,3` |
-| 2017, 13-inch with Touch Bar | `MacBookPro14,2` |
-| 2017, 15-inch with Touch Bar | `MacBookPro14,3` |
+| MacBook Pro | Model identifier | Hardware testing |
+| --- | --- | --- |
+| 2016, 13-inch with Touch Bar | `MacBookPro13,2` | 🟡 Targeted; awaiting tester confirmation |
+| 2016, 15-inch with Touch Bar | `MacBookPro13,3` | 🟢 Tested; function-specific limitations below |
+| 2017, 13-inch with Touch Bar | `MacBookPro14,2` | 🟡 Targeted; awaiting tester confirmation |
+| 2017, 15-inch with Touch Bar | `MacBookPro14,3` | 🟡 Targeted; awaiting tester confirmation |
+
+**Only MacBookPro13,3 has been hardware-tested.** The other T1 models are
+targets, not confirmed working configurations. Reports from testers are welcome
+through [GitHub issues](https://github.com/standardagents/t1bridge/issues);
+include your model, kernel/package versions and which functions work or fail,
+but no serial numbers or machine-specific EFI data.
 
 T2 Macs, Apple Silicon, and models without a Touch Bar are outside this
 project's hardware scope. **Currently installable official packages are for
