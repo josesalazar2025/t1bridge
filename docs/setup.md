@@ -1,11 +1,21 @@
 # Manual setup
 
+> [!CAUTION]
+> **STOP BEFORE PARTITIONING: KEEP AND BACK UP THIS MAC'S APPLE EFI DATA.**
+> Preserve the Apple EFI partition and verify a backup on another device
+> contains `EFI/APPLE/EMBEDDEDOS/FDRData`. Do this before installing Linux or
+> formatting any partition. Without the original data or a matching backup,
+> T1Bridge cannot set up Touch ID. Re-enrollment, reinstalling packages, another
+> Mac's backup, and a generic macOS installer are not substitutes.
+
 Start with the [official package installation instructions](../README.md#install-official-packages)
 for the public repository and signing key. This guide covers service activation,
 machine-data import, fingerprint management, desktop integration and recovery.
 
-The supplied packages currently target x86_64 Arch Linux with systemd; other
-distributions need their own packaging.
+The supplied packages currently support **x86_64 Arch Linux and Arch-based
+distributions (including Omarchy) only**, with systemd 256 or newer. No official
+Ubuntu, Mint, Debian, or Fedora packages are available yet; those distributions
+need their own packaging and validation.
 See [supported versions](dependencies.md#supported-and-tested-versions).
 
 ## Install and start the hardware stack

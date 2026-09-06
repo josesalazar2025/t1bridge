@@ -1,7 +1,22 @@
 # T1Bridge
 
-Open-source Linux support for Apple's T1 iBridge: Touch ID, Touch Bar,
-FaceTime camera, and the services that keep them working together.
+Open-source Linux support for Apple's T1 iBridge. The goal is to support
+**every function directly handled by the T1**, including its display, camera,
+Touch ID, sensors, and device lifecycle—not only fingerprint authentication.
+Current coverage and remaining work are listed below.
+
+> [!CAUTION]
+> **STOP BEFORE ERASING OR PARTITIONING YOUR MAC: PRESERVE ITS APPLE EFI DATA.**
+>
+> Touch ID needs this Mac's original `EFI/APPLE/EMBEDDEDOS/FDRData`.
+> Keep the Apple EFI partition and make a separate backup on another device
+> **before installing Linux or formatting any partition**. Check that the
+> backup actually contains that path; keeping only Linux boot files is not enough.
+>
+> **Without this data or a matching backup, T1Bridge cannot set up Touch ID.**
+> Re-enrolling fingerprints, reinstalling this package, another Mac's backup,
+> or a generic macOS installer cannot substitute for it. If you already erased
+> it, stop Touch ID setup and locate your original backup first.
 
 Install the official signed packages from **linux.standardagents.ai**.
 No source build, GitHub authentication, or download token is required.
@@ -16,37 +31,52 @@ No source build, GitHub authentication, or download token is required.
 | 2017, 15-inch with Touch Bar | `MacBookPro14,3` |
 
 T2 Macs, Apple Silicon, and models without a Touch Bar are outside this
-project's hardware scope. Official packages target **x86_64 Arch Linux and
-Arch-based distributions**, with systemd 256 or newer. Other distributions
-need their own packaging; the hardware stack does not depend on a particular
-desktop environment. See [supported versions](docs/dependencies.md#supported-and-tested-versions).
+project's hardware scope. **Currently installable official packages are for
+x86_64 Arch Linux and Arch-based distributions, including Omarchy, only**
+(systemd 256 or newer). There are no official Ubuntu, Mint, Debian, or Fedora
+packages yet. The source is desktop-neutral; supporting another distribution
+requires packaging and validation, not installing these Arch packages there.
+See [supported versions](docs/dependencies.md#supported-and-tested-versions).
 
 ## T1 function support
 
-| Function | Support | Details |
+🟢 Available · 🟡 Partial / integration needed · 🔴 Not working or not implemented
+
+These statuses describe current coverage, not a claim that every model and
+kernel combination has been tested. Missing T1 functionality remains in scope.
+
+| Function | Current status | Details |
 | --- | --- | --- |
-| Touch Bar display and touch input | Supported | Default renderer, Escape, hardware controls, and F1–F12 while Fn is held. |
-| Screen and keyboard brightness | Supported | Uses the machine's available backlight controls. |
-| Custom Touch Bar renderers | Supported | Unprivileged programs through the [renderer interface](docs/interfaces.md#renderer-selection-v1). |
-| Volume, media controls, desktop HUDs | Optional integration | Requires a desktop provider; none is bundled in the core package. |
-| Touch ID enrollment, matching and deletion | Supported | Standard fprintd tools; up to three enrolled fingers for one Linux owner. |
-| sudo, Polkit and lock-screen authentication | Supported through PAM | Uses `pam_fprintd`; configure each consumer and retain password fallback. |
-| Saved fingerprints across reboot | Supported | Protected keybag storage and automatic restore; no routine re-enrollment. |
-| FaceTime HD camera | Supported | T1 H.264 support through the packaged UVC driver. Application format support still applies. |
-| Private T1 network and xART storage | Supported | Device-driven services; no manually named network profile required. |
-| Apple machine-data import | Supported | Matching preserved EFI partition or explicit EFI-tree/FDR backup. |
-| Ambient-light sensor | Planned | Linux IIO integration is not shipped. |
-| General Secure Enclave key services | Not exposed | No general-purpose signing/key-management API. |
+| Touch Bar display and touch input | 🟢 Available | Default renderer, Escape, hardware controls, and F1–F12 while Fn is held. This is the Touch Bar display, not the laptop's main GPU/display. |
+| Screen and keyboard brightness buttons | 🟢 Available | Controls the machine's available Linux backlights; this does not mean T1Bridge owns those backlight drivers. |
+| Custom Touch Bar renderers | 🟢 Available | Unprivileged programs through the [renderer interface](docs/interfaces.md#renderer-selection-v1). |
+| Volume, media controls, desktop HUDs | 🟡 Optional integration | Requires a desktop provider; none is bundled in the core package. |
+| Touch ID enrollment, matching and deletion | 🟢 Available | Standard fprintd tools; up to three enrolled fingers for one Linux owner. Requires preserved Apple EFI data. |
+| sudo, Polkit and lock-screen authentication | 🟡 Requires configuration | Uses `pam_fprintd`; configure each consumer and retain password fallback. |
+| Saved fingerprints across reboot | 🟢 Available | Protected keybag storage and automatic restore; no routine re-enrollment. |
+| FaceTime HD camera | 🟢 Available | T1 H.264 support through the packaged UVC driver. Application format support still applies. |
+| Private T1 network and xART storage | 🟢 Available | Device-driven services; no manually named network profile required. |
+| Apple machine-data import | 🟢 Available | Matching preserved EFI partition or explicit EFI-tree/FDR backup. Import does not recreate lost data. |
+| T1 startup and reboot recovery | 🟢 Available | Packaged device/service ordering restores the T1 stack after boot. |
+| T1 sleep/wake (system suspend/resume) | 🔴 Not working on the tested machine | Not supported currently. T1 recovery across system sleep/wake remains in scope; the cause of the host suspend failure is not established here. Screen blanking and waking the display are not system suspend/resume. |
+| T1 runtime power saving | 🟡 Limited | Runtime autosuspend is disabled for T1 stability; power-saving suspend/recovery is not a supported feature yet. |
+| Ambient-light sensor | 🔴 Planned | Linux IIO integration is not shipped. |
+| General Secure Enclave key services | 🔴 Not implemented | No general-purpose signing/key-management API; Touch ID support does not imply these services exist. |
 
 Wi-Fi, Bluetooth, speakers, the internal keyboard/trackpad, GPU switching and
-whole-system power management are separate from T1Bridge. This is not a
-complete MacBook hardware-enablement bundle.
+host-wide power management are separate from T1Bridge. **Recovery of the T1's
+own functions during host sleep/wake is in scope**; fixing unrelated GPU,
+firmware, or platform suspend problems is not. This is not a complete MacBook
+hardware-enablement bundle.
 
 ## Install official packages
 
-Keep a working password login and back up your disk. **Preserve the Apple EFI
-partition:** Touch ID needs this Mac's original machine data. A different Mac's
-backup or a generic macOS installer is not a substitute.
+> [!CAUTION]
+> **Before continuing: preserve the Apple EFI partition and verify an external
+> backup contains `EFI/APPLE/EMBEDDEDOS/FDRData`. Without this Mac's data,
+> Touch ID setup will not work. Do not format the partition.**
+
+Keep a working password login and back up your disk.
 
 ### 1. Trust the signing key
 
