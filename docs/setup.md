@@ -185,6 +185,13 @@ the port on Wi-Fi, Ethernet, or all interfaces. Do not save a machine-specific
 interface name as a portable rule. The listener also enforces device and peer
 admission. Cross-machine peer validation remains an open release gate.
 
+Check this **before enrollment**: testers with a default-deny firewall saw a
+first enrollment timeout followed by immediate failures until the private
+link was permitted. `xart: ready` means the service is active, not that inbound
+traffic reaches it. With opt-in diagnostics enabled, `xart-admission` reports
+recorded evidence from this boot; unavailable records are not a failed health
+check, and old admission evidence does not prove current reachability.
+
 On failure, inspect `sudo t1bridge status` and the relevant systemd journal.
 Do not delete `/var/lib/t1bridge`, reset enrollment, or run USB lifecycle
 validation commands as generic repair steps. Protect diagnostic logs before

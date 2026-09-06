@@ -30,16 +30,23 @@ No source build, GitHub authentication, or download token is required.
 
 | MacBook Pro | Model identifier | Hardware testing |
 | --- | --- | --- |
-| 2016, 13-inch with Touch Bar | `MacBookPro13,2` | 🟡 Targeted; awaiting tester confirmation |
+| 2016, 13-inch with Touch Bar | `MacBookPro13,2` | 🟢 Tester-confirmed Touch Bar, Touch ID and reboot persistence; limitations below |
 | 2016, 15-inch with Touch Bar | `MacBookPro13,3` | 🟢 Success confirmed on two machines; limitations below |
 | 2017, 13-inch with Touch Bar | `MacBookPro14,2` | 🟡 Targeted; awaiting tester confirmation |
-| 2017, 15-inch with Touch Bar | `MacBookPro14,3` | 🔴 Enrollment failure reported; details pending |
+| 2017, 15-inch with Touch Bar | `MacBookPro14,3` | 🟡 Enrollment confirmed after scoped xART firewall setup; broader coverage unconfirmed |
 
-**MacBookPro13,3 is the only model with confirmed success**, now reported on
-two machines. One MacBookPro14,3 tester reports enrollment failure; package
-versions, exact failing stage and logs are not yet available. This is not a
-diagnosed cause or evidence that every function on that model fails. The other
-models remain unconfirmed targets. Reports from testers are welcome
+MacBookPro13,3 success is confirmed on two machines. A
+[MacBookPro13,2 tester](https://github.com/standardagents/t1bridge/issues/5)
+confirmed Touch Bar controls, two-finger enrollment/verification, reboot
+persistence and configured PAM consumers on official v0.1.1 packages. Camera
+streaming and system sleep/wake were not tested there. A
+[MacBookPro14,3 tester](https://github.com/standardagents/t1bridge/issues/2)
+confirmed enrollment after allowing xART on the private T1 link and a full
+shutdown/power-on, without replacing the packaged build or resetting saved data.
+This does not establish all functions on that model. Automatic EFI discovery
+still has an [open multi-ESP failure](https://github.com/standardagents/t1bridge/issues/9);
+explicit same-machine backup import works for those reporters.
+Reports from testers are welcome
 through [GitHub issues](https://github.com/standardagents/t1bridge/issues);
 include your model, kernel/package versions and which functions work or fail,
 but no serial numbers or machine-specific EFI data.
@@ -70,7 +77,7 @@ kernel combination has been tested. Missing T1 functionality remains in scope.
 | Saved fingerprints across reboot | 🟢 Available | Protected keybag storage and automatic restore; no routine re-enrollment. |
 | FaceTime HD camera | 🟢 Available | T1 H.264 support through the packaged UVC driver. Application format support still applies. |
 | Private T1 network and xART storage | 🟢 Available | Device-driven services; no manually named network profile required. |
-| Apple machine-data import | 🟢 Available | Matching preserved EFI partition or explicit EFI-tree/FDR backup. Import does not recreate lost data. |
+| Apple machine-data import | 🟡 Available with discovery limitations | Explicit same-machine EFI-tree/FDR backup works; automatic discovery can fail on some multi-ESP layouts. Import does not recreate lost data. |
 | T1 startup and reboot recovery | 🟢 Available | Packaged device/service ordering restores the T1 stack after boot. |
 | T1 sleep/wake (system suspend/resume) | 🔴 Not working on the tested machine | Not supported currently. T1 recovery across system sleep/wake remains in scope; the cause of the host suspend failure is not established here. Screen blanking and waking the display are not system suspend/resume. |
 | T1 runtime power saving | 🟡 Limited | Runtime autosuspend is disabled for T1 stability; power-saving suspend/recovery is not a supported feature yet. |
@@ -174,6 +181,13 @@ The private network and xART services start with the device; do not enable the
 keybag relay as an unconditional boot service or hot-swap competing T1 drivers.
 
 ### 4. Set up Touch ID
+
+> [!IMPORTANT]
+> **Check the private xART firewall prerequisite before enrollment.**
+> A running service does not prove the T1 can connect to it. A default-deny
+> firewall must permit inbound IPv6 TCP 61500 only on the discovered T1 link
+> from its validated peer. See [firewall setup](docs/setup.md#firewall-recovery-and-removal).
+> Do not open this port on Wi-Fi/LAN or disable your firewall.
 
 With this Mac's preserved Apple EFI partition attached and the reader idle:
 

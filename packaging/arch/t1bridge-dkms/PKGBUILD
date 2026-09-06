@@ -1,5 +1,5 @@
 pkgname=t1bridge-dkms
-pkgver=0.1.1
+pkgver=0.1.2
 pkgrel=1
 pkgdesc='Kernel modules for the Apple T1 iBridge display, camera, and private NCM link'
 arch=('x86_64')
@@ -9,7 +9,7 @@ depends=('dkms')
 optdepends=('linux-headers: build modules for the Arch kernel')
 options=('!debug')
 source=("t1bridge-${pkgver}.tar.gz")
-sha256sums=('204b9c7b76232c94705437b40746ecdec2156ab11b568f09e5f750f78ecab587')
+sha256sums=('9a6ea6ff3ec50e555f56459be3092b8c74d2a0a1e7216553fc85445230855e5c')
 backup=('etc/mkinitcpio.conf.d/t1bridge.conf')
 
 package() {
