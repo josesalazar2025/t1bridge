@@ -20,9 +20,11 @@ broker, hardware, socket, timeout, and cancellation failure. Never test a PAM
 change without a verified fail-open path and a persistent root recovery shell
 already open.
 
-Nothing may be published until the complete release and security
-gate passes. Justify every privileged component and every open socket, or
-remove it.
+Owner-approved signed prerelease packages and their corresponding sources may
+be publicly downloadable before the complete release and security gate passes.
+Label them prerelease and retain all unfinished checks; this does not authorize
+a stable release, announcement, or making the GitHub repository public.
+Justify every privileged component and every open socket, or remove it.
 
 ## Code quality
 
