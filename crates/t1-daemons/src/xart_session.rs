@@ -159,10 +159,15 @@ pub fn serve_admitted_tcp_connection(
 /// request dictionary is handled synchronously and receives one binary-plist
 /// response. Opaque xART bytes are never inspected or included in errors.
 ///
+/// The peer closing cleanly between requests is this loop's normal exit and
+/// returns `Ok(())`, not an error; only a mid-frame truncation or another
+/// transport failure is reported.
+///
 /// # Errors
 ///
-/// Returns an error when framing or stream I/O fails, the peer HELLO is absent
-/// or invalid, or a request or response binary plist cannot be processed.
+/// Returns an error when framing or stream I/O fails (other than the peer
+/// cleanly closing between requests), the peer HELLO is absent or invalid, or
+/// a request or response binary plist cannot be processed.
 fn serve_connection<S: Read + Write>(
     stream: &mut S,
     store: &XartStore,
@@ -179,7 +184,13 @@ fn serve_connection<S: Read + Write>(
     hello::validate_peer_hello(&peer_hello.body)?;
 
     loop {
-        let frame = transport.receive_frame()?;
+        let frame = match transport.receive_frame() {
+            Ok(frame) => frame,
+            // The peer is done once it closes cleanly between requests; that
+            // is this loop's only normal exit, not a session failure.
+            Err(TransportError::ConnectionClosed) => return Ok(()),
+            Err(error) => return Err(error.into()),
+        };
         if frame.message_type != FRAME_BINARY_PLIST {
             continue;
         }
@@ -324,14 +335,24 @@ mod tests {
         ));
     }
 
+    fn assert_connection_closed(error: &XartSessionError) {
+        assert!(matches!(
+            error,
+            XartSessionError::Transport(TransportError::ConnectionClosed)
+        ));
+    }
+
     #[test]
     fn sends_server_hello_before_attempting_to_read_peer_hello() {
         let directory = TestDirectory::new();
         let mut stream = MemoryStream::default();
 
+        // No peer HELLO ever arrives, so this is a failure (not a clean exit
+        // between requests) even though the underlying transport error is the
+        // same "peer closed before any byte arrived" case.
         let error = serve_connection(&mut stream, &store(&directory.0)).unwrap_err();
 
-        assert_closed(&error, FramePart::Header);
+        assert_connection_closed(&error);
         let frames = output_frames(&stream);
         assert_eq!(frames.len(), 1);
         assert_eq!(frames[0].message_type, FRAME_HELLO);
@@ -369,9 +390,10 @@ mod tests {
         let input = wire_frames(&[hello_frame(), ignored, plist_frame(&request(100))]);
         let mut stream = MemoryStream::new(input);
 
-        let error = serve_connection(&mut stream, &store(&directory.0)).unwrap_err();
+        // The peer closes cleanly right after its one request; that is a
+        // normal end of the session, not a failure.
+        serve_connection(&mut stream, &store(&directory.0)).unwrap();
 
-        assert_closed(&error, FramePart::Header);
         let frames = output_frames(&stream);
         assert_eq!(frames.len(), 2);
         assert_eq!(frames[0].message_type, FRAME_HELLO);
@@ -399,9 +421,10 @@ mod tests {
         ]);
         let mut stream = MemoryStream::new(input);
 
-        let error = serve_connection(&mut stream, &store).unwrap_err();
+        // The peer closes cleanly right after its second request; that is a
+        // normal end of the session, not a failure.
+        serve_connection(&mut stream, &store).unwrap();
 
-        assert_closed(&error, FramePart::Header);
         let frames = output_frames(&stream);
         assert_eq!(frames.len(), 3);
         for response in &frames[1..] {
@@ -431,11 +454,12 @@ mod tests {
     }
 
     #[test]
-    fn distinguishes_header_eof_from_truncated_body() {
+    fn distinguishes_clean_close_from_truncated_body() {
         let directory = TestDirectory::new();
+        // No requests follow the HELLO, and the stream just ends: a clean
+        // close between requests, not a failure.
         let mut header_eof = MemoryStream::new(wire_frames(&[hello_frame()]));
-        let error = serve_connection(&mut header_eof, &store(&directory.0)).unwrap_err();
-        assert_closed(&error, FramePart::Header);
+        serve_connection(&mut header_eof, &store(&directory.0)).unwrap();
 
         let mut input = wire_frames(&[hello_frame()]);
         let declared = Frame::new(FRAME_BINARY_PLIST, vec![0; 8])

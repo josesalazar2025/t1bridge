@@ -34,6 +34,10 @@ pub enum TransportError {
         /// Frame part being read.
         part: FramePart,
     },
+    /// The peer closed the stream cleanly before any byte of a new frame
+    /// arrived. Distinct from [`Self::UnexpectedEof`]: this is a normal way
+    /// for a connection to end between frames, not a truncated one.
+    ConnectionClosed,
     /// The stream accepted no bytes before the frame part was complete.
     WriteZero {
         /// Frame part being written.
@@ -62,6 +66,9 @@ impl fmt::Display for TransportError {
             Self::UnexpectedEof { part } => {
                 write!(formatter, "BridgeXPC peer closed while reading the {part}")
             }
+            Self::ConnectionClosed => {
+                formatter.write_str("BridgeXPC peer closed the connection before a new frame")
+            }
             Self::WriteZero { part } => {
                 write!(formatter, "BridgeXPC stream stopped accepting the {part}")
             }
@@ -82,7 +89,7 @@ impl Error for TransportError {
             Self::Frame(source) => Some(source),
             Self::AllocationFailed { source, .. } => Some(source),
             Self::Io { source, .. } => Some(source),
-            Self::UnexpectedEof { .. } | Self::WriteZero { .. } => None,
+            Self::UnexpectedEof { .. } | Self::WriteZero { .. } | Self::ConnectionClosed => None,
         }
     }
 }
@@ -159,14 +166,30 @@ impl<S: Read + Write> BridgeXpcTransport<S> {
         self.write_all(FramePart::Body, &frame.body)
     }
 
+    /// Fills `bytes` completely, or reports exactly how the stream fell
+    /// short.
+    ///
+    /// `std::io::Read::read_exact` cannot tell a peer that closes cleanly
+    /// between frames from one that dies mid-frame: both surface as
+    /// `ErrorKind::UnexpectedEof` with no byte count. This loops directly so
+    /// zero bytes filled for a fresh header can be reported as
+    /// [`TransportError::ConnectionClosed`], while any other short read
+    /// (a header interrupted partway through, or any short body read)
+    /// remains [`TransportError::UnexpectedEof`].
     fn read_exact(&mut self, part: FramePart, bytes: &mut [u8]) -> Result<(), TransportError> {
-        self.stream.read_exact(bytes).map_err(|source| {
-            if source.kind() == io::ErrorKind::UnexpectedEof {
-                TransportError::UnexpectedEof { part }
-            } else {
-                TransportError::Io { part, source }
+        let mut filled = 0;
+        while filled < bytes.len() {
+            match self.stream.read(&mut bytes[filled..]) {
+                Ok(0) if filled == 0 && part == FramePart::Header => {
+                    return Err(TransportError::ConnectionClosed);
+                }
+                Ok(0) => return Err(TransportError::UnexpectedEof { part }),
+                Ok(read) => filled += read,
+                Err(source) if source.kind() == io::ErrorKind::Interrupted => {}
+                Err(source) => return Err(TransportError::Io { part, source }),
             }
-        })
+        }
+        Ok(())
     }
 
     fn write_all(&mut self, part: FramePart, bytes: &[u8]) -> Result<(), TransportError> {
@@ -266,6 +289,14 @@ mod tests {
                 part: FramePart::Header
             }
         ));
+    }
+
+    #[test]
+    fn receive_reports_connection_closed_for_a_stream_with_no_bytes() {
+        let stream = ChunkedStream::new(Vec::new(), 3);
+        let error = BridgeXpcTransport::new(stream).receive_frame().unwrap_err();
+
+        assert!(matches!(error, TransportError::ConnectionClosed));
     }
 
     #[test]
