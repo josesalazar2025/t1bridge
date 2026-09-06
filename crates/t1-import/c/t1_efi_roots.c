@@ -1,5 +1,7 @@
 #define _GNU_SOURCE
 
+#define MOUNTPOINT_TEMPLATE "/tmp/t1bridge-efi.XXXXXX"
+
 #include "t1_efi_roots.h"
 #include "t1_efi_roots_test.h"
 
@@ -232,7 +234,8 @@ static int real_open_root(void *context,
 	unsigned long mount_flags, int *root_descriptor)
 {
 	char source[64];
-	char mountpoint[] = "/run/t1bridge-efi.XXXXXX";
+	/* PrivateTmp remains writable under ProtectSystem=strict. */
+	char mountpoint[] = MOUNTPOINT_TEMPLATE;
 	struct stat info;
 	int root = -1;
 	int contains_apple;
@@ -405,4 +408,9 @@ int t1_efi_roots_test_mount_error_status(int error_number)
 unsigned long t1_efi_roots_test_mount_flags(void)
 {
 	return readonly_mount_flags();
+}
+
+const char *t1_efi_roots_test_mountpoint_template(void)
+{
+	return MOUNTPOINT_TEMPLATE;
 }

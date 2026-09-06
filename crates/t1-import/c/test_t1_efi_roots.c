@@ -1,11 +1,16 @@
+#define _GNU_SOURCE
+
 #include "t1_efi_roots.h"
 #include "t1_efi_roots_test.h"
 
 #include <assert.h>
 #include <errno.h>
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/mount.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 struct fixture {
 	struct t1_efi_test_candidate candidates[T1_EFI_ROOT_LIMIT + 1U];
@@ -294,8 +299,28 @@ static void test_namespace_failure_prevents_source_access(void)
 	assert(fixture.namespace_calls == 1 && fixture.open_count == 0);
 }
 
+static void test_private_mountpoint_creation_and_cleanup(void)
+{
+	char *path = strdup(t1_efi_roots_test_mountpoint_template());
+	struct stat info;
+	mode_t previous;
+
+	assert(path != NULL);
+	previous = umask(0077);
+	assert(mkdtemp(path) != NULL);
+	umask(previous);
+	assert(lstat(path, &info) == 0);
+	assert(S_ISDIR(info.st_mode));
+	assert((info.st_mode & 0777) == 0700);
+	assert(info.st_uid == geteuid());
+	assert(rmdir(path) == 0);
+	assert(lstat(path, &info) == -1 && errno == ENOENT);
+	free(path);
+}
+
 int main(void)
 {
+	test_private_mountpoint_creation_and_cleanup();
 	test_candidate_filter();
 	test_order_deduplication_and_flags();
 	test_skips_non_sources_without_reordering_results();
