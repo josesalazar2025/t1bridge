@@ -152,7 +152,9 @@ enum XartAdmissionEvidence {
     /// indistinguishable from here, and none of them means no operation
     /// happened.
     DiagnosticsUnavailable,
-    /// Diagnostic records exist, but no enrollment or match was attempted.
+    /// Diagnostic records exist for this boot, but none show an enrollment
+    /// or match attempt. This does not mean no attempt happened before
+    /// diagnostics were enabled -- only that none is recorded now.
     Unused,
     /// An enrollment or match was attempted at some point this boot, but no
     /// xART admission was recorded at any point this boot. The two are not
@@ -166,7 +168,7 @@ impl fmt::Display for XartAdmissionEvidence {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::DiagnosticsUnavailable => "diagnostics unavailable",
-            Self::Unused => "not yet attempted this boot",
+            Self::Unused => "no operation recorded this boot",
             Self::NeverAdmitted => {
                 "operation recorded; no xART admission recorded this boot -- if \
                  xART is running, check that inbound TCP 61500 on the discovered \
