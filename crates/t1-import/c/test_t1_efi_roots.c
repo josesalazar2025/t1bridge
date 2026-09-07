@@ -5,6 +5,7 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <limits.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
@@ -318,8 +319,39 @@ static void test_private_mountpoint_creation_and_cleanup(void)
 	free(path);
 }
 
+static void test_existing_mount_selection(void)
+{
+	const struct t1_efi_test_candidate candidate = {7, 9};
+	unsigned long long mount_id = 0;
+	char path[PATH_MAX];
+
+	assert(t1_efi_roots_test_parse_mount(
+		"42 1 7:9 / /test\\040esp rw - vfat /dev/synthetic rw\n",
+		&candidate, &mount_id, path) == 1);
+	assert(mount_id == 42 && strcmp(path, "/test esp") == 0);
+	assert(t1_efi_roots_test_parse_mount(
+		"42 1 7:9 / /test\\134a\\011b\\012c rw - vfat synthetic rw\n",
+		&candidate, &mount_id, path) == 1);
+	assert(strcmp(path, "/test\\a\tb\nc") == 0);
+	assert(t1_efi_roots_test_parse_mount(
+		"42 1 7:9 /EFI /test rw - vfat synthetic rw\n",
+		&candidate, &mount_id, path) == 0);
+	assert(t1_efi_roots_test_parse_mount(
+		"42 1 7:8 / /test rw - vfat synthetic rw\n",
+		&candidate, &mount_id, path) == 0);
+	assert(t1_efi_roots_test_parse_mount(
+		"42 1 7:9 / /test rw - ext4 synthetic rw\n",
+		&candidate, &mount_id, path) == 0);
+	assert(t1_efi_roots_test_parse_mount(
+		"42 1 7:9 / /test\\000 rw - vfat synthetic rw\n",
+		&candidate, &mount_id, path) == -1);
+	assert(t1_efi_roots_test_parse_mount(
+		"bad - vfat synthetic rw\n", &candidate, &mount_id, path) == -1);
+}
+
 int main(void)
 {
+	test_existing_mount_selection();
 	test_private_mountpoint_creation_and_cleanup();
 	test_candidate_filter();
 	test_order_deduplication_and_flags();

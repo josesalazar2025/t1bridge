@@ -31,5 +31,8 @@ int t1_efi_roots_test_device_number_is_valid(uint32_t major_number,
 int t1_efi_roots_test_mount_error_status(int error_number);
 unsigned long t1_efi_roots_test_mount_flags(void);
 const char *t1_efi_roots_test_mountpoint_template(void);
+int t1_efi_roots_test_parse_mount(const char *line,
+	const struct t1_efi_test_candidate *candidate,
+	unsigned long long *mount_id, char *path);
 
 #endif

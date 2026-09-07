@@ -88,6 +88,9 @@ them, matches data to the live sensor, and stores the selected record under
 root-only `/var/lib/t1bridge/machine-data/`. Missing or conflicting data is an
 error, not permission to choose an arbitrary partition.
 
+Already-mounted EFI partitions are inspected through a private read-only view;
+the importer does not change their existing mount flags.
+
 To use a backup instead, supply its absolute path:
 
 ```sh

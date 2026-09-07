@@ -8,6 +8,8 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <libudev.h>
+#include <limits.h>
+#include <linux/openat2.h>
 #include <sched.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -17,6 +19,7 @@
 #include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 
 #define T1_ESP_PARTITION_TYPE "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
@@ -229,6 +232,111 @@ static int remove_unmounted_directory(char *mountpoint)
 	return T1_EFI_ROOTS_OK;
 }
 
+static int decode_mount_path(char *path)
+{
+	char *output = path;
+	const char *input = path;
+
+	while (*input != '\0') {
+		if (*input != '\\') {
+			*output++ = *input++;
+			continue;
+		}
+		if (strncmp(input, "\\040", 4) == 0)
+			*output++ = ' ';
+		else if (strncmp(input, "\\011", 4) == 0)
+			*output++ = '\t';
+		else if (strncmp(input, "\\012", 4) == 0)
+			*output++ = '\n';
+		else if (strncmp(input, "\\134", 4) == 0)
+			*output++ = '\\';
+		else
+			return -1;
+		input += 4;
+	}
+	*output = '\0';
+	return path[0] == '/' ? 0 : -1;
+}
+
+/* Only whole-filesystem mounts qualify; a subdirectory bind hides siblings. */
+static int parse_existing_mount(const char *line,
+	const struct t1_efi_test_candidate *candidate,
+	unsigned long long *mount_id, char path[PATH_MAX])
+{
+	unsigned int device_major, device_minor;
+	char root[PATH_MAX];
+	const char *separator = strstr(line, " - ");
+
+	if (separator == NULL || strncmp(separator + 3, "vfat ", 5) != 0)
+		return 0;
+	if (sscanf(line, "%llu %*u %u:%u %4095s %4095s", mount_id,
+	    &device_major, &device_minor, root, path) != 5)
+		return -1;
+	if (device_major != candidate->major_number ||
+	    device_minor != candidate->minor_number || strcmp(root, "/") != 0)
+		return 0;
+	return decode_mount_path(path) == 0 ? 1 : -1;
+}
+
+static int bind_existing_mount(const struct t1_efi_test_candidate *candidate,
+	const char *mountpoint, unsigned long flags, int *mounted)
+{
+	FILE *inventory = fopen("/proc/self/mountinfo", "re");
+	char line[16384];
+	char path[PATH_MAX];
+	int status = T1_EFI_ROOTS_INSPECTION_FAILED;
+	size_t count = 0;
+
+	if (inventory == NULL)
+		return status;
+	while (fgets(line, sizeof(line), inventory) != NULL) {
+		unsigned long long mount_id;
+		struct statx info;
+		const struct open_how how = {
+			.flags = O_PATH | O_DIRECTORY | O_CLOEXEC,
+			.resolve = RESOLVE_NO_SYMLINKS,
+		};
+		char source[64];
+		int root;
+		int match;
+
+		if (++count > 65536 || strchr(line, '\n') == NULL)
+			break;
+		match = parse_existing_mount(line, candidate, &mount_id, path);
+		if (match < 0)
+			break;
+		if (match == 0)
+			continue;
+		root = (int)syscall(SYS_openat2, AT_FDCWD, path, &how, sizeof(how));
+		if (root < 0)
+			break;
+		/* Pin the exact mount from the inventory, not a replacement at its path. */
+		if (statx(root, "", AT_EMPTY_PATH, STATX_TYPE | STATX_MNT_ID, &info) < 0 ||
+		    (info.stx_mask & (STATX_TYPE | STATX_MNT_ID)) !=
+		    (STATX_TYPE | STATX_MNT_ID) || !S_ISDIR(info.stx_mode) ||
+		    info.stx_mnt_id != mount_id ||
+		    info.stx_dev_major != candidate->major_number ||
+		    info.stx_dev_minor != candidate->minor_number) {
+			(void)close_owned(root);
+			break;
+		}
+		(void)snprintf(source, sizeof(source), "/proc/self/fd/%d", root);
+		if (mount(source, mountpoint, NULL, MS_BIND, NULL) == 0) {
+			*mounted = 1;
+			/* MS_BIND makes this per-mount: never remount the shared superblock. */
+			if (mount(NULL, mountpoint, NULL, MS_REMOUNT | MS_BIND | flags,
+			    NULL) == 0)
+				status = T1_EFI_ROOTS_OK;
+		}
+		if (close_owned(root) < 0)
+			status = T1_EFI_ROOTS_CLEANUP_FAILED;
+		break;
+	}
+	if (fclose(inventory) != 0)
+		status = T1_EFI_ROOTS_INSPECTION_FAILED;
+	return status;
+}
+
 static int real_open_root(void *context,
 	const struct t1_efi_test_candidate *candidate,
 	unsigned long mount_flags, int *root_descriptor)
@@ -258,10 +366,13 @@ static int real_open_root(void *context,
 	if (mkdtemp(mountpoint) == NULL)
 		return T1_EFI_ROOTS_INSPECTION_FAILED;
 	if (mount(source, mountpoint, "vfat", mount_flags, NULL) < 0) {
-		int mount_status = mount_error_status(errno);
+		int mount_error = errno;
 
-		status = remove_unmounted_directory(mountpoint);
-		return status == T1_EFI_ROOTS_OK ? mount_status : status;
+		status = mount_error == EBUSY ?
+			bind_existing_mount(candidate, mountpoint, mount_flags, &mounted) :
+			mount_error_status(mount_error);
+		if (status != T1_EFI_ROOTS_OK)
+			goto out;
 	}
 	mounted = 1;
 	root = open_directory_component(AT_FDCWD, mountpoint);
@@ -413,4 +524,11 @@ unsigned long t1_efi_roots_test_mount_flags(void)
 const char *t1_efi_roots_test_mountpoint_template(void)
 {
 	return MOUNTPOINT_TEMPLATE;
+}
+
+int t1_efi_roots_test_parse_mount(const char *line,
+	const struct t1_efi_test_candidate *candidate,
+	unsigned long long *mount_id, char *path)
+{
+	return parse_existing_mount(line, candidate, mount_id, path);
 }
