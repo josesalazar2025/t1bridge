@@ -32,7 +32,7 @@ No source build, GitHub authentication, or download token is required.
 | --- | --- | --- |
 | 2016, 13-inch with Touch Bar | `MacBookPro13,2` | 🟢 Tester-confirmed Touch Bar, Touch ID and reboot persistence; limitations below |
 | 2016, 15-inch with Touch Bar | `MacBookPro13,3` | 🟢 Success confirmed on two machines; limitations below |
-| 2017, 13-inch with Touch Bar | `MacBookPro14,2` | 🟡 Targeted; awaiting tester confirmation |
+| 2017, 13-inch with Touch Bar | `MacBookPro14,2` | 🟡 Touch Bar and Touch ID confirmed; lid/resume and relay failures reported |
 | 2017, 15-inch with Touch Bar | `MacBookPro14,3` | 🟡 Enrollment confirmed after scoped xART firewall setup; broader coverage unconfirmed |
 
 MacBookPro13,3 success is confirmed on two machines. A
@@ -46,6 +46,12 @@ shutdown/power-on, without replacing the packaged build or resetting saved data.
 This does not establish all functions on that model. Automatic EFI discovery
 still has an [open multi-ESP failure](https://github.com/standardagents/t1bridge/issues/9);
 explicit same-machine backup import works for those reporters.
+A [MacBookPro14,2 tester](https://github.com/standardagents/t1bridge/issues/2#issuecomment-5563782774)
+reported Touch Bar, enrollment/verification, sudo and lock authentication on
+v0.1.1, with controls persisting after reboot. Camera capture was not tested;
+lid reopening left a black screen, and a sustained
+[keybag relay restart loop](https://github.com/standardagents/t1bridge/issues/14)
+remains under investigation.
 Reports from testers are welcome
 through [GitHub issues](https://github.com/standardagents/t1bridge/issues);
 include your model, kernel/package versions and which functions work or fail,
