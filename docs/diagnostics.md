@@ -38,6 +38,11 @@ For boot failures, leave the setting enabled for the next planned reboot.
 Do **not** restart NCM, xART, or the keybag relay just to turn on logging: doing so
 changes the live state being investigated. Keep password access available.
 
+Enabling broker logging does not enable an already-running xART process. The
+status row must treat missing or capped xART records as incomplete evidence,
+not a firewall failure. Successful enrollment does not require an admission
+log to exist; do not change a working firewall rule just to obtain that log.
+
 The broker also accepts `--diagnostics` in its service command. Do not launch a
 second broker manually. Direct development commands can use the environment
 variable `T1BRIDGE_DIAGNOSTICS=1` instead.

@@ -156,6 +156,8 @@ enum XartAdmissionEvidence {
     /// or match attempt. This does not mean no attempt happened before
     /// diagnostics were enabled -- only that none is recorded now.
     Unused,
+    /// Broker attempts are recorded, but xART logging is absent or capped.
+    Incomplete,
     /// An enrollment or match was attempted at some point this boot, but no
     /// xART admission was recorded at any point this boot. The two are not
     /// correlated to the same attempt.
@@ -169,6 +171,10 @@ impl fmt::Display for XartAdmissionEvidence {
         formatter.write_str(match self {
             Self::DiagnosticsUnavailable => "diagnostics unavailable",
             Self::Unused => "no operation recorded this boot",
+            Self::Incomplete => {
+                "operation recorded; xART diagnostic coverage incomplete -- \
+                 missing records do not establish a firewall failure"
+            }
             Self::NeverAdmitted => {
                 "operation recorded; no xART admission recorded this boot -- if \
                  xART is running, check that inbound TCP 61500 on the discovered \
@@ -489,12 +495,8 @@ fn run_bounded(mut command: Command, timeout: Duration, limit: u64) -> Option<Ve
 
 /// Classifies xART admission evidence from already-read diagnostic lines.
 ///
-/// Any operation attempt is recognized from the broker's own `enroll` or
-/// `match` phase beginning; xART admission is recognized from its
-/// `session-admission` phase succeeding. Neither is correlated to a specific
-/// attempt -- this reports whether either happened at all this boot, which is
-/// enough to distinguish "nothing tried yet" from "tried repeatedly with zero
-/// admissions" without tracking per-attempt state.
+/// Broker attempts and xART admissions are boot-wide, not correlated to one
+/// operation. Missing or capped xART logging cannot establish absent admission.
 fn classify_xart_admission_evidence<'a>(
     lines: impl Iterator<Item = &'a str>,
 ) -> XartAdmissionEvidence {
@@ -515,15 +517,30 @@ fn classify_xart_admission_evidence<'a>(
         Stage::SessionAdmission.label(),
         Outcome::Ok.label()
     );
+    let xart_component = format!("component={}", Component::Xart.label());
+    let limit = format!(
+        "phase={} result={}",
+        Stage::Limit.label(),
+        Outcome::Limit.label()
+    );
 
     let mut saw_any_record = false;
     let mut attempted = false;
     let mut admitted = false;
+    let mut saw_xart_record = false;
+    let mut xart_limited = false;
     for line in lines {
         let Some(line) = line.strip_prefix(DIAGNOSTIC_LINE_PREFIX) else {
             continue;
         };
         saw_any_record = true;
+        if line
+            .split_ascii_whitespace()
+            .any(|field| field == xart_component)
+        {
+            saw_xart_record = true;
+            xart_limited |= line.contains(&limit);
+        }
         if line.contains(&attempt_component)
             && (line.contains(&enroll_begin) || line.contains(&match_begin))
         {
@@ -538,6 +555,8 @@ fn classify_xart_admission_evidence<'a>(
         XartAdmissionEvidence::DiagnosticsUnavailable
     } else if admitted {
         XartAdmissionEvidence::Admitted
+    } else if attempted && (!saw_xart_record || xart_limited) {
+        XartAdmissionEvidence::Incomplete
     } else if attempted {
         XartAdmissionEvidence::NeverAdmitted
     } else {
@@ -762,6 +781,7 @@ mod tests {
     #[test]
     fn classifier_reports_an_attempt_with_no_admission_as_never_admitted() {
         let lines = [
+            "t1bridge-diagnostic v=1 component=xart phase=xart-bind result=error code=1 command=none",
             "t1bridge-diagnostic v=1 component=broker phase=enroll result=begin code=none command=none",
             "t1bridge-diagnostic v=1 component=broker phase=transaction result=begin code=none command=0x03",
             "t1bridge-diagnostic v=1 component=broker phase=transaction result=error code=1 command=0x03",
@@ -797,7 +817,37 @@ mod tests {
         ];
         assert_eq!(
             classify_xart_admission_evidence(lines.into_iter()),
-            XartAdmissionEvidence::NeverAdmitted
+            XartAdmissionEvidence::Incomplete
+        );
+    }
+
+    #[test]
+    fn broker_only_enrollment_records_do_not_imply_a_firewall_failure() {
+        let lines = [
+            "t1bridge-diagnostic v=1 component=broker phase=enroll result=begin code=none command=none",
+            "t1bridge-diagnostic v=1 component=broker phase=enroll result=ok code=none command=none",
+        ];
+        assert_eq!(
+            classify_xart_admission_evidence(lines.into_iter()),
+            XartAdmissionEvidence::Incomplete
+        );
+    }
+
+    #[test]
+    fn capped_xart_records_cannot_establish_missing_admission() {
+        let lines = [
+            "t1bridge-diagnostic v=1 component=xart phase=xart-bind result=error code=1 command=none",
+            "t1bridge-diagnostic v=1 component=xart phase=limit result=limit code=none command=none",
+            "t1bridge-diagnostic v=1 component=broker phase=match result=begin code=none command=none",
+        ];
+        assert_eq!(
+            classify_xart_admission_evidence(lines.into_iter()),
+            XartAdmissionEvidence::Incomplete
+        );
+        let admission = "t1bridge-diagnostic v=1 component=xart phase=session-admission result=ok code=none command=none";
+        assert_eq!(
+            classify_xart_admission_evidence(lines.into_iter().chain([admission])),
+            XartAdmissionEvidence::Admitted
         );
     }
 
