@@ -444,19 +444,28 @@ fn wait_for_child<E>(child: &mut Child, deadline: Instant, error: E) -> Result<E
 /// [`XartAdmissionEvidence::DiagnosticsUnavailable`], never as a failure of
 /// the surrounding status report: this one row is best-effort by nature.
 fn inspect_xart_admission_evidence() -> XartAdmissionEvidence {
-    let mut command = Command::new(JOURNALCTL);
-    command.args(["-b", "--no-pager", "-o", "cat"]);
-    command.args(["-u", TRUSTED_BROKER_UNIT]);
-    command.args(["-u", TRUSTED_XART_UNIT_GLOB]);
-    command.args(["--grep", &format!("^{DIAGNOSTIC_LINE_PREFIX}")]);
-    command.env_clear().current_dir("/");
-    match run_bounded(command, JOURNAL_INSPECTION_TIMEOUT, JOURNAL_OUTPUT_LIMIT) {
+    match run_bounded(
+        xart_journal_command(),
+        JOURNAL_INSPECTION_TIMEOUT,
+        JOURNAL_OUTPUT_LIMIT,
+    ) {
         Some(bytes) => match std::str::from_utf8(&bytes) {
             Ok(text) => classify_xart_admission_evidence(text.lines()),
             Err(_) => XartAdmissionEvidence::DiagnosticsUnavailable,
         },
         None => XartAdmissionEvidence::DiagnosticsUnavailable,
     }
+}
+
+fn xart_journal_command() -> Command {
+    let mut command = Command::new(JOURNALCTL);
+    // Expanding the unit glob across unrelated user journals can exhaust the deadline.
+    command.args(["--system", "-b", "--no-pager", "-o", "cat"]);
+    command.args(["-u", TRUSTED_BROKER_UNIT]);
+    command.args(["-u", TRUSTED_XART_UNIT_GLOB]);
+    command.args(["--grep", &format!("^{DIAGNOSTIC_LINE_PREFIX}")]);
+    command.env_clear().current_dir("/");
+    command
 }
 
 /// Runs `command` to completion and returns its stdout, bounded to `limit`
@@ -707,6 +716,30 @@ mod tests {
         let mut command = Command::new("/bin/sh");
         command.args(["-c", script]);
         command
+    }
+
+    #[test]
+    fn journal_query_excludes_user_journals_and_keeps_trusted_boot_scope() {
+        let command = xart_journal_command();
+        let args: Vec<_> = command.get_args().collect();
+        assert_eq!(command.get_program(), JOURNALCTL);
+        assert_eq!(command.get_current_dir(), Some(Path::new("/")));
+        assert_eq!(
+            args,
+            [
+                "--system",
+                "-b",
+                "--no-pager",
+                "-o",
+                "cat",
+                "-u",
+                TRUSTED_BROKER_UNIT,
+                "-u",
+                TRUSTED_XART_UNIT_GLOB,
+                "--grep",
+                "^t1bridge-diagnostic ",
+            ]
+        );
     }
 
     #[test]
