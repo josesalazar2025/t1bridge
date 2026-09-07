@@ -1578,6 +1578,72 @@ mod tests {
     }
 
     #[test]
+    fn input_socket_routes_one_cancel_and_consumes_ack_without_release_repeat() {
+        let (renderer, hardware) =
+            t1_platform::seqpacket::pair_for_test().expect("local hardware protocol socket pair");
+        let mut connection = HardwareConnection::new(renderer);
+        let hardware = SeqPacketClient::new(hardware.as_fd());
+        let mut session = session();
+        session.set_overlay(Some(OverlayState::Authenticate), None);
+        let mut packet = vec![0; MAX_PACKET_LENGTH];
+
+        for (timestamp, contacts) in [
+            (1, vec![contact(1, 60, 10)]),
+            (2, vec![contact(1, 60, 10)]),
+            (3, Vec::new()),
+        ] {
+            let frame = wire::encode_service(
+                &Envelope {
+                    request_id: 0,
+                    message: ServiceMessage::InputFrame(input(timestamp, false, contacts)),
+                },
+                Some(dimensions()),
+            )
+            .expect("encode input frame");
+            hardware.send(&frame).expect("deliver input frame");
+            let frame = connection
+                .receive_service(Some(dimensions()))
+                .expect("receive input frame");
+            session.handle(frame, &connection).expect("dispatch input");
+
+            if timestamp != 1 {
+                assert_eq!(
+                    hardware.receive(&mut packet),
+                    Err(SeqPacketError::WouldBlock)
+                );
+                assert!(session.pending.is_empty());
+                continue;
+            }
+            let length = hardware.receive(&mut packet).expect("receive cancellation");
+            let request = wire::decode_client(
+                &packet[..length],
+                AncillaryMetadata::default(),
+                Some(dimensions()),
+            )
+            .expect("decode cancellation");
+            assert!(matches!(request.message, ClientMessage::CancelTouchId));
+            assert_eq!(session.pending.len(), 1);
+            let ack = wire::encode_service(
+                &Envelope {
+                    request_id: request.request_id,
+                    message: ServiceMessage::Ack,
+                },
+                Some(dimensions()),
+            )
+            .expect("encode acknowledgement");
+            hardware.send(&ack).expect("deliver acknowledgement");
+            let ack = connection
+                .receive_service(Some(dimensions()))
+                .expect("receive acknowledgement");
+            session
+                .handle(ack, &connection)
+                .expect("consume acknowledgement");
+            assert!(session.pending.is_empty());
+            assert_eq!(session.overlay_state, Some(OverlayState::Authenticate));
+        }
+    }
+
+    #[test]
     fn cancellation_request_is_typed_and_ack_is_cosmetic_neutral() {
         let mut session = session();
         session.set_overlay(Some(OverlayState::Authenticate), None);
