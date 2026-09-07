@@ -162,6 +162,25 @@ Use the header package matching your kernel if it is not `linux`. This performs
 a normal system upgrade. Confirm DKMS and initramfs/UKI generation succeed
 before rebooting; do not bypass signature or dependency errors.
 
+> [!NOTE]
+> **On Omarchy**, this `pacman -Syu` is blocked by Omarchy's own update guard,
+> which exists to stop a system upgrade from bypassing `omarchy update`'s
+> snapshot, keyring, and migration steps. Run the system upgrade through
+> Omarchy first, then install these packages without repeating `-u`:
+>
+> ```bash
+> omarchy update
+> sudo pacman -S --needed linux-headers t1bridge t1bridge-dkms libfprint-t1bridge fprintd-t1bridge
+> ```
+>
+> `omarchy update` already synced the databases and upgraded existing
+> packages, so the plain `-S --needed` install right after it is not a
+> partial upgrade. Do not run `pacman -Sy` (sync without upgrade) on its own
+> to work around the guard; on Arch that risks mismatched dependency versions
+> across an unevenly upgraded system. If you really need one combined
+> command, `sudo env OMARCHY_ALLOW_DIRECT_PACMAN=1 pacman -Syu --needed ...`
+> bypasses the guard for that invocation only.
+
 | Official package | Purpose |
 | --- | --- |
 | `t1bridge` | Services, importer, Touch ID broker and default Touch Bar |
