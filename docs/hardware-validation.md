@@ -289,7 +289,10 @@ particular compositor or pending desktop patch is required by T1Bridge.
 1. With the healthy stack restored, lock the active desktop session.
 2. Unlock once with the enrolled finger.
 3. Lock again, begin a fingerprint attempt, then enter the normal password.
-4. Lock once more and cancel from the Touch ID region on the Touch Bar.
+4. Lock once more and press the visible Touch ID prompt on the OLED Touch Bar
+   to cancel. Do not touch the separate physical fingerprint sensor: that
+   starts a fingerprint scan, not cancellation. Cancellation acts on press;
+   holding and releasing must not cancel a subsequent attempt.
 5. Repeat password-only unlock with the broker unavailable and its activation
    sockets stopped; a stopped process alone can be restarted by socket
    activation. Restore the previous service/socket state afterward.

@@ -1755,19 +1755,21 @@ mod tests {
     }
 
     #[test]
-    fn cancellation_requires_visible_overlay_tap_and_deduplicates_simultaneous_contacts() {
+    fn cancellation_on_press_deduplicates_contacts_and_never_repeats_on_release() {
         let active = Some(OverlayState::Authenticate);
         let mut interpreter = new_interpreter();
-        interpreter
+        let outcome = interpreter
             .ingest(
                 &input(1, false, vec![contact(1, 24, 10), contact(2, 25, 10)]),
                 active,
             )
             .expect("two overlay presses");
+        assert!(outcome.cancel_touch_id);
+        assert!(outcome.actions.is_empty());
         let outcome = interpreter
             .ingest(&input(2, false, Vec::new()), active)
             .expect("two overlay releases");
-        assert!(outcome.cancel_touch_id);
+        assert!(!outcome.cancel_touch_id);
         assert!(outcome.actions.is_empty());
 
         let mut absent = new_interpreter();
@@ -1781,21 +1783,27 @@ mod tests {
                 .cancel_touch_id
         );
 
-        let mut outside = new_interpreter();
-        outside
-            .ingest(&input(1, false, vec![contact(1, 60, 10)]), active)
-            .expect("outside press");
+        let mut label = new_interpreter();
         assert!(
-            !outside
+            label
+                .ingest(&input(1, false, vec![contact(1, 60, 10)]), active)
+                .expect("label press")
+                .cancel_touch_id
+        );
+        assert!(
+            !label
                 .ingest(&input(2, false, Vec::new()), active)
-                .expect("outside release")
+                .expect("label release")
                 .cancel_touch_id
         );
 
         let mut dragged = new_interpreter();
-        dragged
-            .ingest(&input(1, false, vec![contact(1, 24, 10)]), active)
-            .expect("overlay press");
+        assert!(
+            dragged
+                .ingest(&input(1, false, vec![contact(1, 24, 10)]), active)
+                .expect("overlay press")
+                .cancel_touch_id
+        );
         dragged
             .ingest(&input(2, false, vec![contact(1, 80, 10)]), active)
             .expect("overlay drag");
@@ -1807,14 +1815,66 @@ mod tests {
         );
 
         let mut function_row = new_interpreter();
-        function_row
-            .ingest(&input(1, true, vec![contact(1, 80, 8)]), active)
-            .expect("function press");
+        assert!(
+            function_row
+                .ingest(&input(1, true, vec![contact(1, 80, 8)]), active)
+                .expect("function press")
+                .cancel_touch_id
+        );
         let outcome = function_row
             .ingest(&input(2, true, Vec::new()), active)
             .expect("function release");
         assert!(!outcome.cancel_touch_id);
         assert!(outcome.actions.is_empty());
+    }
+
+    #[test]
+    fn held_contact_cannot_cancel_a_new_overlay_and_escape_stays_available() {
+        let mut interpreter = new_interpreter();
+        let held = vec![contact(1, 80, 10)];
+        assert!(
+            interpreter
+                .ingest(
+                    &input(1, false, held.clone()),
+                    Some(OverlayState::Authenticate)
+                )
+                .unwrap()
+                .cancel_touch_id
+        );
+        assert!(
+            !interpreter
+                .ingest(&input(2, false, held.clone()), None)
+                .unwrap()
+                .cancel_touch_id
+        );
+        assert!(
+            !interpreter
+                .ingest(&input(3, false, held), Some(OverlayState::Approve))
+                .unwrap()
+                .cancel_touch_id
+        );
+        assert!(
+            !interpreter
+                .ingest(&input(4, false, Vec::new()), Some(OverlayState::Approve))
+                .unwrap()
+                .cancel_touch_id
+        );
+
+        let outcome = interpreter
+            .ingest(
+                &input(5, false, vec![contact(2, 4, 10)]),
+                Some(OverlayState::Authenticate),
+            )
+            .unwrap();
+        assert!(!outcome.cancel_touch_id);
+        let outcome = interpreter
+            .ingest(
+                &input(6, false, Vec::new()),
+                Some(OverlayState::Authenticate),
+            )
+            .unwrap();
+        assert!(!outcome.cancel_touch_id);
+        assert_eq!(outcome.actions, [StockAction::Escape]);
     }
 
     #[test]

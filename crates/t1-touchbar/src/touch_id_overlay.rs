@@ -198,8 +198,8 @@ impl TouchIdOverlay {
         })
     }
 
-    /// Returns whether one completed tap on the custom-style cancel target
-    /// requests typed cancellation.
+    /// Cancels on finger-down anywhere in the visible prompt. Release must not
+    /// cancel a new operation that may have started while the finger was held.
     #[must_use]
     pub fn cancellation_for_gesture(
         self,
@@ -211,17 +211,16 @@ impl TouchIdOverlay {
             return false;
         };
         let _ = fn_held;
-        let Gesture::Tap(contact) = gesture else {
+        let Gesture::Press(contact) = gesture else {
             return false;
         };
         let Some(bounds) = self.bounds(state) else {
             return false;
         };
-        let center_x = bounds.x + scale(NATIVE_CANCEL_CENTER_OFFSET, self.height);
-        let radius = scale(16, self.height).max(1);
-        let dx = contact.x() - f64::from(center_x);
-        let dy = contact.y() - f64::from(self.height) / 2.0;
-        dx * dx + dy * dy <= f64::from(radius * radius)
+        contact.x() >= f64::from(bounds.x)
+            && contact.x() < f64::from(bounds.x + bounds.width)
+            && contact.y() >= f64::from(bounds.y)
+            && contact.y() < f64::from(bounds.y + bounds.height)
     }
 
     #[must_use]
@@ -537,7 +536,7 @@ mod tests {
     }
 
     #[test]
-    fn only_a_completed_cancel_target_tap_requests_cancellation() {
+    fn prompt_press_cancels_but_release_and_noninteractive_states_do_not() {
         let overlay = TouchIdOverlay::new(130, 20);
         let bounds = overlay.bounds(OverlayState::Authenticate).unwrap();
         let center = DisplayContact::new(
@@ -546,26 +545,50 @@ mod tests {
             10.0,
         )
         .unwrap();
-        let outside = DisplayContact::new(1, f64::from(bounds.x + bounds.width - 1), 10.0).unwrap();
-        assert!(overlay.cancellation_for_gesture(
-            Gesture::Tap(center),
-            Some(OverlayState::Authenticate),
-            false
-        ));
-        assert!(!overlay.cancellation_for_gesture(
-            Gesture::Tap(outside),
-            Some(OverlayState::Authenticate),
-            false
-        ));
-        assert!(!overlay.cancellation_for_gesture(
-            Gesture::Press(center),
-            Some(OverlayState::Authenticate),
-            false
-        ));
-        assert!(!overlay.cancellation_for_gesture(
-            Gesture::Tap(center),
+        for state in [
+            OverlayState::Authenticate,
+            OverlayState::Approve,
+            OverlayState::Retry,
+        ] {
+            let state_bounds = overlay.bounds(state).unwrap();
+            let left = DisplayContact::new(1, f64::from(state_bounds.x), 10.0).unwrap();
+            let right =
+                DisplayContact::new(1, f64::from(state_bounds.x + state_bounds.width - 1), 10.0)
+                    .unwrap();
+            for fn_held in [false, true] {
+                for contact in [left, right] {
+                    assert!(overlay.cancellation_for_gesture(
+                        Gesture::Press(contact),
+                        Some(state),
+                        fn_held
+                    ));
+                    assert!(!overlay.cancellation_for_gesture(
+                        Gesture::Tap(contact),
+                        Some(state),
+                        fn_held
+                    ));
+                }
+            }
+        }
+        for state in [
+            None,
             Some(OverlayState::Enrollment),
-            false
-        ));
+            Some(OverlayState::Success),
+        ] {
+            assert!(!overlay.cancellation_for_gesture(Gesture::Press(center), state, false));
+        }
+        for (x, y) in [
+            (0.0, 10.0),
+            (f64::from(bounds.x) - 1.0, 10.0),
+            (130.0, 10.0),
+            (f64::from(bounds.x), 20.0),
+        ] {
+            let contact = DisplayContact::new(1, x, y).unwrap();
+            assert!(!overlay.cancellation_for_gesture(
+                Gesture::Press(contact),
+                Some(OverlayState::Authenticate),
+                false
+            ));
+        }
     }
 }
