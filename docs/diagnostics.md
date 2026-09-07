@@ -84,6 +84,16 @@ can differ from the package manager's version.
 | Touch Bar hardware | DRM/input/keyboard/session startup, renderer admission and session revocation |
 | Renderer/provider | Renderer connection lifetime, provider availability changes and action success/failure |
 
+Development builds after v0.1.3 also trace OLED cancellation in the renderer:
+`overlay` begin/ok means a visible state was entered/cleared; `overlay-press`
+ok/error means a new contact was eligible/ineligible for cancellation;
+`touchid-cancel` begin means a send was attempted, ok means the hardware service
+acknowledged it, and error means sending failed or the service rejected it.
+These records do not prove the final fprintd result. No `overlay-press` record
+does not identify which earlier input boundary failed: the service reads hidraw,
+not evdev, and a held contact does not generate another press. Do not use
+absence of `evtest` events as proof of missing Touch Bar input.
+
 Example:
 
 ```text

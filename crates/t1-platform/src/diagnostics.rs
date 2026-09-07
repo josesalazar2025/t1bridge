@@ -44,6 +44,7 @@ labels!(Stage {
     RendererProtocol => "renderer-protocol", ProviderAction => "provider-action",
     ProviderStatus => "provider-status", Match => "match", Delete => "delete",
     List => "list", SepLease => "sep-lease", Limit => "limit",
+    Overlay => "overlay", OverlayPress => "overlay-press", TouchIdCancel => "touchid-cancel",
 });
 
 labels!(Outcome {
@@ -266,6 +267,26 @@ mod tests {
                 .to_string()
                 .ends_with("command=none")
         );
+    }
+
+    #[test]
+    fn cancellation_records_expose_no_contact_or_request_values() {
+        for (stage, label) in [
+            (Stage::Overlay, "overlay"),
+            (Stage::OverlayPress, "overlay-press"),
+            (Stage::TouchIdCancel, "touchid-cancel"),
+        ] {
+            for outcome in [Outcome::Begin, Outcome::Ok, Outcome::Error] {
+                let record = Record::new(Component::Renderer, stage, outcome, None);
+                assert_eq!(
+                    record.to_string(),
+                    format!(
+                        "t1bridge-diagnostic v=1 component=renderer phase={label} result={} code=none command=none",
+                        outcome.label()
+                    )
+                );
+            }
+        }
     }
 
     #[test]

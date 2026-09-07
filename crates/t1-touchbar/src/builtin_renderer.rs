@@ -7,6 +7,7 @@ use std::path::Path;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use t1_platform::diagnostics::{Component, Outcome, Record, Stage, emit};
 use t1_platform::frame_memfd::RendererFrame;
 use t1_platform::seqpacket::{self, SeqPacketClient, SeqPacketError};
 use t1_touchbar_hw::digitizer::DisplayDimensions;
@@ -513,7 +514,16 @@ impl RendererSession {
                 }
                 Ok(())
             }
-            PendingRequest::TapKeys | PendingRequest::CancelTouchId => Ok(()),
+            PendingRequest::CancelTouchId => {
+                emit(Record::new(
+                    Component::Renderer,
+                    Stage::TouchIdCancel,
+                    Outcome::Ok,
+                    None,
+                ));
+                Ok(())
+            }
+            PendingRequest::TapKeys => Ok(()),
             PendingRequest::Register => Err(BuiltinRendererError::Protocol),
         }
     }
@@ -524,11 +534,19 @@ impl RendererSession {
         _code: ErrorCode,
         _connection: &HardwareConnection,
     ) -> Result<(), BuiltinRendererError> {
-        match self
+        let pending = self
             .pending
             .remove(&request_id)
-            .ok_or(BuiltinRendererError::Protocol)?
-        {
+            .ok_or(BuiltinRendererError::Protocol)?;
+        if matches!(pending, PendingRequest::CancelTouchId) {
+            emit(Record::new(
+                Component::Renderer,
+                Stage::TouchIdCancel,
+                Outcome::Error,
+                None,
+            ));
+        }
+        match pending {
             PendingRequest::TapKeys
             | PendingRequest::CancelTouchId
             | PendingRequest::HardwareAction(_) => {
@@ -568,7 +586,19 @@ impl RendererSession {
     ) -> Result<(), BuiltinRendererError> {
         let request_id = self.allocate_request(PendingRequest::CancelTouchId)?;
         let message = cancellation_request(request_id);
+        emit(Record::new(
+            Component::Renderer,
+            Stage::TouchIdCancel,
+            Outcome::Begin,
+            None,
+        ));
         if let Err(error) = connection.send_request(&message, Some(self.dimensions), None) {
+            emit(Record::new(
+                Component::Renderer,
+                Stage::TouchIdCancel,
+                Outcome::Error,
+                None,
+            ));
             self.pending.remove(&request_id);
             return Err(error);
         }
@@ -745,6 +775,16 @@ impl RendererSession {
         self.enrollment_progress_target = u16::from(progress.unwrap_or(0)) * 10;
         self.enrollment_progress_last_update = self.now;
         if state_changed {
+            emit(Record::new(
+                Component::Renderer,
+                Stage::Overlay,
+                if state.is_some() {
+                    Outcome::Begin
+                } else {
+                    Outcome::Ok
+                },
+                None,
+            ));
             self.overlay_start_opacity = self.overlay_opacity;
             self.overlay_last_update = self.now;
             match state {
@@ -1050,10 +1090,18 @@ impl InputInterpreter {
                 self.repeat = None;
                 self.suppress_tap = None;
             }
-            if self
-                .touch_id
-                .cancellation_for_gesture(gesture, overlay_state, self.fn_pressed)
-            {
+            let cancels =
+                self.touch_id
+                    .cancellation_for_gesture(gesture, overlay_state, self.fn_pressed);
+            if overlay_state.is_some() && matches!(gesture, crate::gesture::Gesture::Press(_)) {
+                emit(Record::new(
+                    Component::Renderer,
+                    Stage::OverlayPress,
+                    if cancels { Outcome::Ok } else { Outcome::Error },
+                    None,
+                ));
+            }
+            if cancels {
                 cancel_touch_id = true;
                 continue;
             }
