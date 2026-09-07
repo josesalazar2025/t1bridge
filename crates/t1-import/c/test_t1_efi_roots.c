@@ -5,8 +5,10 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mount.h>
@@ -349,8 +351,47 @@ static void test_existing_mount_selection(void)
 		"bad - vfat synthetic rw\n", &candidate, &mount_id, path) == -1);
 }
 
+static void test_mount_path_rejects_symlinks_and_parent_traversal(void)
+{
+	char root[] = "/tmp/t1-efi-path.XXXXXX";
+	char child[PATH_MAX], link[PATH_MAX], nested[PATH_MAX], file[PATH_MAX];
+	char leaf[PATH_MAX];
+	struct stat expected, actual;
+	int descriptor;
+
+	assert(mkdtemp(root) != NULL);
+	assert(snprintf(child, sizeof(child), "%s/child", root) > 0);
+	assert(snprintf(link, sizeof(link), "%s/link", root) > 0);
+	assert(snprintf(file, sizeof(file), "%s/file", root) > 0);
+	assert(mkdir(child, 0700) == 0);
+	assert(snprintf(leaf, sizeof(leaf), "%s/child/leaf", root) > 0);
+	assert(mkdir(leaf, 0700) == 0);
+	assert(symlink(child, link) == 0);
+	descriptor = open(file, O_CREAT | O_EXCL | O_WRONLY, 0600);
+	assert(descriptor >= 0 && close(descriptor) == 0);
+	descriptor = t1_efi_roots_test_open_mount_path(child);
+	assert(descriptor >= 0);
+	assert(fstat(descriptor, &actual) == 0 && stat(child, &expected) == 0);
+	assert(actual.st_dev == expected.st_dev && actual.st_ino == expected.st_ino);
+	assert((fcntl(descriptor, F_GETFD) & FD_CLOEXEC) != 0);
+	assert(close(descriptor) == 0);
+	assert(t1_efi_roots_test_open_mount_path(link) < 0);
+	assert(snprintf(nested, sizeof(nested), "%s/link/leaf", root) > 0);
+	assert(t1_efi_roots_test_open_mount_path(nested) < 0);
+	assert(snprintf(nested, sizeof(nested), "%s/child/..", root) > 0);
+	assert(t1_efi_roots_test_open_mount_path(nested) < 0);
+	assert(t1_efi_roots_test_open_mount_path(file) < 0);
+	assert(t1_efi_roots_test_open_mount_path("relative") < 0);
+	assert(t1_efi_roots_test_open_mount_path(NULL) < 0);
+	descriptor = t1_efi_roots_test_open_mount_path("/");
+	assert(descriptor >= 0 && close(descriptor) == 0);
+	assert(unlink(file) == 0 && unlink(link) == 0);
+	assert(rmdir(leaf) == 0 && rmdir(child) == 0 && rmdir(root) == 0);
+}
+
 int main(void)
 {
+	test_mount_path_rejects_symlinks_and_parent_traversal();
 	test_existing_mount_selection();
 	test_private_mountpoint_creation_and_cleanup();
 	test_candidate_filter();

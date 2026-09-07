@@ -9,7 +9,6 @@
 #include <fcntl.h>
 #include <libudev.h>
 #include <limits.h>
-#include <linux/openat2.h>
 #include <sched.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -19,7 +18,6 @@
 #include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
-#include <sys/syscall.h>
 #include <unistd.h>
 
 #define T1_ESP_PARTITION_TYPE "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
@@ -278,6 +276,44 @@ static int parse_existing_mount(const char *line,
 	return decode_mount_path(path) == 0 ? 1 : -1;
 }
 
+static int open_mount_path(const char *path)
+{
+	const int flags = O_PATH | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW;
+	char copy[PATH_MAX];
+	char *remaining;
+	char *component;
+	int parent;
+
+	if (path == NULL || path[0] != '/' || strlen(path) >= sizeof(copy))
+		return -1;
+	memcpy(copy, path, strlen(path) + 1);
+	remaining = copy;
+	parent = open("/", flags);
+	if (parent < 0)
+		return -1;
+	/* RestrictSUIDSGID rejects openat2; pin each no-follow directory instead. */
+	while ((component = strsep(&remaining, "/")) != NULL) {
+		int next;
+
+		if (component[0] == '\0')
+			continue;
+		if (strcmp(component, ".") == 0 || strcmp(component, "..") == 0) {
+			(void)close_owned(parent);
+			return -1;
+		}
+		next = openat(parent, component, flags);
+		if (close_owned(parent) < 0) {
+			if (next >= 0)
+				(void)close_owned(next);
+			return -1;
+		}
+		if (next < 0)
+			return -1;
+		parent = next;
+	}
+	return parent;
+}
+
 static int bind_existing_mount(const struct t1_efi_test_candidate *candidate,
 	const char *mountpoint, unsigned long flags, int *mounted)
 {
@@ -292,10 +328,6 @@ static int bind_existing_mount(const struct t1_efi_test_candidate *candidate,
 	while (fgets(line, sizeof(line), inventory) != NULL) {
 		unsigned long long mount_id;
 		struct statx info;
-		const struct open_how how = {
-			.flags = O_PATH | O_DIRECTORY | O_CLOEXEC,
-			.resolve = RESOLVE_NO_SYMLINKS,
-		};
 		char source[64];
 		int root;
 		int match;
@@ -307,7 +339,7 @@ static int bind_existing_mount(const struct t1_efi_test_candidate *candidate,
 			break;
 		if (match == 0)
 			continue;
-		root = (int)syscall(SYS_openat2, AT_FDCWD, path, &how, sizeof(how));
+		root = open_mount_path(path);
 		if (root < 0)
 			break;
 		/* Pin the exact mount from the inventory, not a replacement at its path. */
@@ -524,6 +556,11 @@ unsigned long t1_efi_roots_test_mount_flags(void)
 const char *t1_efi_roots_test_mountpoint_template(void)
 {
 	return MOUNTPOINT_TEMPLATE;
+}
+
+int t1_efi_roots_test_open_mount_path(const char *path)
+{
+	return open_mount_path(path);
 }
 
 int t1_efi_roots_test_parse_mount(const char *line,
