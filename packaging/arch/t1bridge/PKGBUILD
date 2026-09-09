@@ -1,5 +1,5 @@
 pkgname=t1bridge
-pkgver=0.1.6
+pkgver=0.1.7
 pkgrel=1
 pkgdesc='Apple T1 iBridge userspace services'
 arch=('x86_64')
@@ -9,7 +9,7 @@ depends=('gcc-libs' 'glibc' 'systemd>=256')
 makedepends=('cargo' 'pkgconf' 'rust' 'xz')
 options=('!debug')
 source=("${pkgname}-${pkgver}.tar.gz")
-sha256sums=('518ada53e529d1ea8f24e4be0dcfea9f62b73083794be7c93eff57c194c4442c')
+sha256sums=('f36b909cf3d57f36d7020c1c651dc3859b105fc0a3adecec4aac48b9e91d05a3')
 
 build() {
 	local source_root="${srcdir}/${pkgname}-${pkgver}"

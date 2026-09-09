@@ -106,7 +106,7 @@ underlying keybag failure or rate-limit downstream lock-screen requests. An
 installed package may still use the earlier fixed two-second policy. Recovery
 on affected hardware remains unverified.
 
-Newer source also records each relay keystore reply when diagnostics are
+T1Bridge v0.1.7 also records each relay keystore reply when diagnostics are
 enabled. `phase=keystore-reply` carries the parser result (0 success, 1 remote
 rejection, negative parser error). A remote rejection adds `keystore-outer`
 and, only if the outer status is zero, `keystore-inner` records with the actual
