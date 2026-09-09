@@ -122,7 +122,7 @@ pub fn decode(input: &[u8]) -> Result<Value, Error> {
 
     let offset_size = usize::from(trailer[6]);
     let reference_size = usize::from(trailer[7]);
-    if !matches!(offset_size, 1 | 2 | 4 | 8) || !matches!(reference_size, 1 | 2 | 4 | 8) {
+    if !(1..=8).contains(&offset_size) || !(1..=8).contains(&reference_size) {
         return Err(Error::InvalidTrailer);
     }
 
@@ -979,6 +979,29 @@ mod tests {
         let encoded = encode(&value).unwrap();
         assert_eq!(encoded[encoded.len() - TRAILER_SIZE + 6], 4);
         assert_eq!(decode(&encoded).unwrap(), value);
+    }
+
+    #[test]
+    fn decodes_three_byte_offsets_as_written_by_corefoundation() {
+        // CoreFoundation writes the narrowest offset width that fits, so real
+        // FDRData files use widths such as 3; the format allows 1..=8 bytes.
+        let value = Value::Data(vec![0x5a; 300]);
+        let encoded = encode(&value).unwrap();
+        let trailer_start = encoded.len() - TRAILER_SIZE;
+        let trailer = &encoded[trailer_start..];
+        assert_eq!(trailer[6], 2);
+        let object_count = usize::try_from(read_be_u64(&trailer[8..16]).unwrap()).unwrap();
+        let table_start = usize::try_from(read_be_u64(&trailer[24..32]).unwrap()).unwrap();
+        let mut widened = encoded[..table_start].to_vec();
+        for index in 0..object_count {
+            let start = table_start + index * 2;
+            let offset = read_be_u64(&encoded[start..start + 2]).unwrap();
+            widened.extend_from_slice(&offset.to_be_bytes()[5..]);
+        }
+        let mut new_trailer = trailer.to_vec();
+        new_trailer[6] = 3;
+        widened.extend_from_slice(&new_trailer);
+        assert_eq!(decode(&widened).unwrap(), value);
     }
 
     #[test]
