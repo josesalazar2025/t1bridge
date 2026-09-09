@@ -4,6 +4,17 @@
 #include <stdio.h>
 #include <string.h>
 
+static _Thread_local sep_keystore_observer keystore_observer;
+
+sep_keystore_observer sep_session_set_keystore_observer(
+	sep_keystore_observer observer)
+{
+	sep_keystore_observer previous = keystore_observer;
+
+	keystore_observer = observer;
+	return previous;
+}
+
 static const char *relay_validation_name(int result)
 {
 	switch (result) {
@@ -448,6 +459,12 @@ int sep_session_keystore_exchange(
 	if (result != SEP_SESSION_OK)
 		return result;
 	result = sep_keystore_parse_reply(&message, &pending, operation, reply);
+	if (keystore_observer)
+		keystore_observer(
+			operation->selector, result,
+			result == SEP_KEYSTORE_REMOTE_ERROR ? reply->outer_result : 0,
+			result == SEP_KEYSTORE_REMOTE_ERROR && reply->outer_result == 0 ?
+				reply->inner_result : 0);
 	if (result == SEP_KEYSTORE_REMOTE_ERROR) {
 		sep_session_clear_transfers(session);
 		return SEP_SESSION_REMOTE_ERROR;

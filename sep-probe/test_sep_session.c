@@ -36,6 +36,9 @@ struct fake_transport {
 	uint8_t last_send_selector;
 	uint32_t last_ready_endpoint;
 	uint32_t last_send_message_index;
+	int8_t keystore_outer;
+	int32_t keystore_inner;
+	int keystore_bad_length;
 };
 
 static unsigned int failures;
@@ -144,14 +147,16 @@ static void build_keystore_reply(struct fake_transport *fake,
 	uint8_t message[8] = { 0 };
 	size_t ipc_length = sizeof(ipc);
 
-	store_u32_le(ipc + IPC_RESULT_OFFSET, 0);
+	store_u32_le(ipc + IPC_RESULT_OFFSET, (uint32_t)fake->keystore_inner);
 	EXPECT(sep_keystore_seal(ipc, ipc_length, UINT64_C(9001)) ==
 	       SEP_KEYSTORE_OK);
 	if (fake->mode == FAKE_KEYSTORE_NON_AUTHORITATIVE_HASH)
 		ipc[4] ^= UINT8_C(0x80);
 	message[1] = (uint8_t)(fake->pending_selector | UINT8_C(0x80));
 	message[2] = fake->pending_transaction;
-	store_u16_le(message + 6, (uint16_t)ipc_length);
+	message[3] = (uint8_t)fake->keystore_outer;
+	store_u16_le(message + 6,
+		     fake->keystore_bad_length ? 1 : (uint16_t)ipc_length);
 	build_response(response, SEP_RELAY_KEYSTORE_ENDPOINT, message,
 		       sizeof(message), ipc, ipc_length, 0);
 }
@@ -570,8 +575,71 @@ static void test_control_reply_tokens_are_not_transaction_authority(void)
 	EXPECT(sep_session_destroy(&session) == SEP_SESSION_OK);
 }
 
+static struct {
+	unsigned int count;
+	uint8_t selector;
+	int result;
+	int8_t outer;
+	int32_t inner;
+} observed;
+
+static void observe_keystore(uint8_t selector, int result,
+			     int8_t outer, int32_t inner)
+{
+	observed.count++;
+	observed.selector = selector;
+	observed.result = result;
+	observed.outer = outer;
+	observed.inner = inner;
+}
+
+static void test_keystore_observation_preserves_results_and_redacts_fields(void)
+{
+	for (unsigned int scenario = 0; scenario < 4; ++scenario) {
+		struct fake_transport fake = { 0 };
+		struct sep_session session;
+		struct sep_keystore_operation operation;
+		struct sep_keystore_reply reply;
+		uint8_t request[SEP_RELAY_DATA_CAPACITY] = { 0 };
+		int expected = SEP_SESSION_OK;
+
+		if (scenario == 1) {
+			fake.keystore_outer = -5;
+			fake.keystore_inner = -7; /* Not present after outer rejection. */
+			expected = SEP_SESSION_REMOTE_ERROR;
+		} else if (scenario == 2) {
+			fake.keystore_inner = -7;
+			expected = SEP_SESSION_REMOTE_ERROR;
+		} else if (scenario == 3) {
+			fake.keystore_bad_length = 1;
+			fake.keystore_inner = -7; /* Unvalidated bytes must not escape. */
+			expected = SEP_SESSION_ERROR_PROTOCOL;
+		}
+		memset(&observed, 0, sizeof(observed));
+		EXPECT(sep_session_set_keystore_observer(observe_keystore) == NULL);
+		EXPECT(negotiate_session(&session, &fake) == SEP_SESSION_OK);
+		build_capabilities(request, &operation);
+		EXPECT(sep_session_keystore_exchange(
+			&session, &operation, request, operation.request_length,
+			&reply, 1000) == expected);
+		EXPECT(observed.count == 1);
+		EXPECT(observed.selector == SEP_KEYSTORE_SELECTOR_CAPABILITIES);
+		EXPECT(observed.result == (scenario == 0 ? SEP_KEYSTORE_OK :
+			scenario == 3 ? SEP_KEYSTORE_ERROR_LENGTH : SEP_KEYSTORE_REMOTE_ERROR));
+		EXPECT(observed.outer == (scenario == 1 ? -5 : 0));
+		EXPECT(observed.inner == (scenario == 2 ? -7 : 0));
+		EXPECT(session.phase == (scenario == 3 ? SEP_SESSION_PHASE_POISONED :
+			SEP_SESSION_PHASE_READY));
+		if (scenario != 0)
+			EXPECT(all_zero(session.input, sizeof(session.input)));
+		EXPECT(sep_session_set_keystore_observer(NULL) == observe_keystore);
+		EXPECT(sep_session_destroy(&session) == SEP_SESSION_OK);
+	}
+}
+
 int main(void)
 {
+	test_keystore_observation_preserves_results_and_redacts_fields();
 	test_negotiation_uses_exact_directions();
 	test_keystore_skips_with_in_only();
 	test_acm_reply_is_acknowledged_out_only();

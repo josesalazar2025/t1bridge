@@ -44,6 +44,8 @@ labels!(Stage {
     RendererProtocol => "renderer-protocol", ProviderAction => "provider-action",
     ProviderStatus => "provider-status", Match => "match", Delete => "delete",
     List => "list", SepLease => "sep-lease", Limit => "limit",
+    KeystoreReply => "keystore-reply", KeystoreOuter => "keystore-outer",
+    KeystoreInner => "keystore-inner",
     Overlay => "overlay", OverlayPress => "overlay-press", TouchIdCancel => "touchid-cancel",
 });
 
@@ -76,6 +78,7 @@ pub struct Record {
     outcome: Outcome,
     code: Option<i64>,
     command: Option<u16>,
+    selector: Option<u8>,
 }
 
 impl Record {
@@ -92,6 +95,7 @@ impl Record {
             outcome,
             code,
             command: None,
+            selector: None,
         }
     }
 
@@ -116,6 +120,18 @@ impl Record {
         };
         self
     }
+
+    /// Adds only a supported keystore operation selector, never a handle or ID.
+    #[must_use]
+    pub const fn with_keystore_selector(mut self, selector: u8) -> Self {
+        self.selector = match selector {
+            0x01..=0x04 | 0x06 | 0x0d | 0x18..=0x19 | 0x21 | 0x23..=0x24 | 0x2a | 0x4d => {
+                Some(selector)
+            }
+            _ => None,
+        };
+        self
+    }
 }
 
 impl fmt::Display for Record {
@@ -134,7 +150,11 @@ impl fmt::Display for Record {
         match self.command {
             Some(code) => write!(f, " command=0x{code:02x}"),
             None => f.write_str(" command=none"),
+        }?;
+        if let Some(selector) = self.selector {
+            write!(f, " selector=0x{selector:02x}")?;
         }
+        Ok(())
     }
 }
 
@@ -204,9 +224,69 @@ pub fn native(component: Component, stage: Stage, code: i32) {
     ));
 }
 
+/// Preserves native reply status without reading keybag handles or payloads.
+#[cfg(feature = "sep-operation")]
+pub(crate) fn keystore_reply(selector: u8, status: i32, outer: i8, inner: i32) {
+    for record in keystore_records(selector, status, outer, inner)
+        .into_iter()
+        .flatten()
+    {
+        emit(record);
+    }
+}
+
+#[cfg(any(feature = "sep-operation", test))]
+fn keystore_records(selector: u8, status: i32, outer: i8, inner: i32) -> [Option<Record>; 3] {
+    let record = |stage, code: i32| {
+        Record::new(
+            Component::Sep,
+            stage,
+            if code == 0 {
+                Outcome::Ok
+            } else {
+                Outcome::Error
+            },
+            Some(i64::from(code)),
+        )
+        .with_keystore_selector(selector)
+    };
+    [
+        Some(record(Stage::KeystoreReply, status)),
+        (status == 1).then(|| record(Stage::KeystoreOuter, i32::from(outer))),
+        (status == 1 && outer == 0).then(|| record(Stage::KeystoreInner, inner)),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keystore_status_never_invents_absent_remote_fields() {
+        let lines = |status, outer, inner| {
+            keystore_records(3, status, outer, inner)
+                .into_iter()
+                .flatten()
+                .map(|r| r.to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(lines(0, -5, -7).len(), 1);
+        assert_eq!(lines(-3, -5, -7).len(), 1);
+        let outer = lines(1, -5, -7);
+        assert_eq!(outer.len(), 2);
+        assert!(outer[1].contains("phase=keystore-outer result=error code=-5"));
+        assert!(outer.iter().all(|s| s.ends_with("selector=0x03")));
+        let inner = lines(1, 0, -7);
+        assert_eq!(inner.len(), 3);
+        assert!(inner[2].contains("phase=keystore-inner result=error code=-7"));
+        let rejected = keystore_records(0xff, 1, 0, -7);
+        assert!(
+            rejected
+                .into_iter()
+                .flatten()
+                .all(|r| !r.to_string().contains("selector="))
+        );
+    }
 
     struct Broken;
     impl Write for Broken {

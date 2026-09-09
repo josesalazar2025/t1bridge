@@ -26,6 +26,9 @@ use std::ffi::c_void;
 #[cfg(feature = "sep-operation")]
 use std::sync::atomic::{AtomicBool, Ordering};
 
+#[cfg(feature = "sep-operation")]
+type RawKeystoreObserver = unsafe extern "C" fn(u8, c_int, i8, i32);
+
 #[cfg(any(feature = "frame-memfd", feature = "seqpacket"))]
 use std::os::fd::AsRawFd;
 #[cfg(any(
@@ -227,6 +230,11 @@ unsafe extern "C" {
         ready: Option<RawSepReadyCallback>,
         ready_context: *mut c_void,
     ) -> c_int;
+
+    #[cfg(feature = "sep-operation")]
+    fn sep_session_set_keystore_observer(
+        observer: Option<RawKeystoreObserver>,
+    ) -> Option<RawKeystoreObserver>;
 
     #[cfg(feature = "import-fs")]
     fn t1_import_fs_reserve(
@@ -1004,6 +1012,14 @@ where
 }
 
 #[cfg(feature = "sep-operation")]
+unsafe extern "C" fn observe_keystore_reply(selector: u8, status: c_int, outer: i8, inner: i32) {
+    // Diagnostics cannot unwind across C or change the operation's result.
+    let _ = std::panic::catch_unwind(|| {
+        crate::diagnostics::keystore_reply(selector, status, outer, inner);
+    });
+}
+
+#[cfg(feature = "sep-operation")]
 pub(super) fn run_sep_notification_relay<C, F>(
     acquisition_timeout_ms: u32,
     poll_timeout_ms: u32,
@@ -1020,6 +1036,13 @@ where
         ready_called: false,
         panic: None,
     };
+    // SAFETY: the observer is thread-local, synchronous, and takes only scalars.
+    // Save/restore brackets this native call, including a deferred callback panic.
+    let previous = unsafe {
+        sep_session_set_keystore_observer(
+            crate::diagnostics::enabled().then_some(observe_keystore_reply),
+        )
+    };
     // SAFETY: both context pointers remain live for the synchronous native
     // lease. The callbacks retain nothing and Rust unwinding is contained
     // until native teardown has completed.
@@ -1033,6 +1056,8 @@ where
             std::ptr::from_mut(&mut state).cast(),
         )
     };
+    // SAFETY: restore this thread's prior observer before any Rust unwinding.
+    unsafe { sep_session_set_keystore_observer(previous) };
     if let Some(panic) = state.panic {
         std::panic::resume_unwind(panic);
     }
@@ -1862,4 +1887,33 @@ pub(super) fn decode_xz(input: &[u8], output: &mut [u8], memory_limit: u64) -> (
         )
     };
     (status, output_size)
+}
+
+#[cfg(all(test, feature = "sep-operation"))]
+mod keystore_observer_tests {
+    use super::*;
+
+    unsafe extern "C" fn sentinel(_: u8, _: c_int, _: i8, _: i32) {}
+
+    #[test]
+    fn observer_is_thread_local_and_restored_after_cancelled_relay() {
+        // SAFETY: callbacks are static and scalar-only; no context is retained.
+        let original = unsafe { sep_session_set_keystore_observer(Some(sentinel)) };
+        let other_thread_was_empty = std::thread::spawn(|| {
+            // SAFETY: reads/resets only this fresh thread's observer.
+            unsafe { sep_session_set_keystore_observer(None).is_none() }
+        })
+        .join()
+        .unwrap();
+        let (status, ready) = run_sep_notification_relay(100, 25, &|| true, || true);
+        // SAFETY: restore the observer that preceded this test.
+        let restored = unsafe { sep_session_set_keystore_observer(original) };
+        assert!(other_thread_was_empty);
+        assert_eq!(status, -103);
+        assert!(!ready);
+        assert!(std::ptr::fn_addr_eq(
+            restored.unwrap(),
+            sentinel as RawKeystoreObserver
+        ));
+    }
 }

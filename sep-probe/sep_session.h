@@ -90,6 +90,18 @@ int sep_session_keystore_exchange(
 	size_t request_length, struct sep_keystore_reply *reply,
 	unsigned int timeout_ms);
 
+/*
+ * Optional synchronous observer of validated keystore reply status only.
+ * No buffers, handles, transaction identities, or opaque values are exposed.
+ * The observer is thread-local; callers restore the returned previous value.
+ * Remote fields are meaningful only for SEP_KEYSTORE_REMOTE_ERROR; inner status
+ * is present only when outer status is zero. Observers must not alter the lease.
+ */
+typedef void (*sep_keystore_observer)(uint8_t selector, int result,
+				      int8_t outer_status, int32_t inner_status);
+sep_keystore_observer sep_session_set_keystore_observer(
+	sep_keystore_observer observer);
+
 /* Receive-only traffic. Timeout/interruption is healthy idle, not poison. */
 int sep_session_drain_notification(struct sep_session *session,
 				   unsigned int timeout_ms);

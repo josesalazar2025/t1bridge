@@ -106,6 +106,22 @@ underlying keybag failure or rate-limit downstream lock-screen requests. An
 installed package may still use the earlier fixed two-second policy. Recovery
 on affected hardware remains unverified.
 
+Newer source also records each relay keystore reply when diagnostics are
+enabled. `phase=keystore-reply` carries the parser result (0 success, 1 remote
+rejection, negative parser error). A remote rejection adds `keystore-outer`
+and, only if the outer status is zero, `keystore-inner` records with the actual
+remote status. `selector` is an allowlisted operation: `0x03` loads a keybag,
+`0x0d` promotes it, `0x04` queries lock state, `0x23` gets configuration,
+`0x18` unlocks, and `0x19` queries device state. It is not a handle or identity.
+
+These records distinguish which operation within a broad stage failed. Keep
+the first rejected reply and its immediately preceding successful replies,
+plus the final `sep-lease` result. Expected not-found replies can occur during
+initial setup; a rejected reply alone does not establish a failed lease.
+No new requests, retries or resets are added. The observer runs only during the
+relay's synchronous native call and shares the process-wide 4096-record limit.
+This additional evidence is not present in v0.1.6 or earlier packages.
+
 ## Coverage and format
 
 | Component | Recorded boundaries |
@@ -140,7 +156,8 @@ t1bridge-diagnostic v=1 component=broker phase=transaction result=error code=1 c
 
 Labels come from fixed enums. `code` is a native command status or adapter error
 category; interpret it with its component and phase. `command` is an allowlisted
-Mesa command code, never a request header identifier. A stage's `ok` means that
+Mesa command code, never a request header identifier. Optional `selector`
+identifies a supported keystore operation, not a Mesa command. A stage's `ok` means that
 call returned successfully, not that a fingerprint matched or enrollment
 completed. Keep the final fprintd result.
 
