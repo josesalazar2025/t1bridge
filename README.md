@@ -239,13 +239,18 @@ sudo systemctl status t1bridge-import.service --no-pager
 ```
 
 For a copied backup instead, see [backup import](docs/setup.md#import-this-machines-apple-data).
-After successful import, enroll and verify from your normal account:
+After successful import, enroll and verify from your normal account in a
+terminal inside your graphical desktop session, with a working Polkit agent:
 
 ```bash
 fprintd-list "$(id -un)"
 fprintd-enroll -f right-index-finger
 fprintd-verify -f right-index-finger
 ```
+
+An enrollment timeout can mean missing Polkit authorization, even when xART is
+working. See [enrollment troubleshooting](docs/setup.md#enrollment-timeouts)
+before changing firewall rules.
 
 If you already have enrolled fingers, verify an existing one instead of enrolling
 it again. Choose the correct finger label and repeatedly lift/touch during

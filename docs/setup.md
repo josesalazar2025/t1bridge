@@ -118,7 +118,8 @@ macOS recovery procedure, not something the T1Bridge importer performs.
 
 ## Enroll and verify
 
-Use your normal user account and a working desktop Polkit authentication agent:
+Run these commands as your normal user in a terminal inside your graphical
+desktop session, with a working Polkit authentication agent:
 
 ```sh
 fprintd-list "$(id -un)"
@@ -132,6 +133,29 @@ and touching the same finger until enrollment completes, then verify it.
 T1Bridge currently permits three enrolled identities for one Linux owner.
 Use `fprintd-list` again to confirm the recorded label. Do not use the direct
 `t1bridge enroll` development path for standard fingerprint management.
+
+### Enrollment timeouts
+
+`EnrollStart failed: Timeout was reached` does not by itself identify an xART
+firewall failure. Enrollment requires Polkit authorization for
+`net.reactivated.fprint.device.enroll`. An SSH session, script, or agent-driven
+shell without an available authorization agent can time out because the
+password prompt cannot be shown.
+
+Before changing firewall rules, inspect the fprintd journal locally:
+
+```sh
+journalctl -b -u fprintd --since "5 minutes ago" --no-pager
+```
+
+If it reports `Authorization denied` for `EnrollStart` and that Polkit action,
+retry from your graphical desktop terminal and complete the authorization
+prompt. Do not use `sudo fprintd-enroll` to bypass the policy. If authorization
+succeeds but enrollment still fails, continue with the
+[private xART firewall checks](#firewall-recovery-and-removal). Keep the journal
+private; report only the denied action and error, not the full log.
+
+### Remove a print
 
 To deliberately remove one print, substitute its exact listed label:
 
