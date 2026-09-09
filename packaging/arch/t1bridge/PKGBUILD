@@ -5,7 +5,7 @@ pkgdesc='Apple T1 iBridge userspace services'
 arch=('x86_64')
 url='https://github.com/standardagents/t1bridge'
 license=('MIT')
-depends=('gcc-libs' 'glibc' 'systemd>=256')
+depends=('gcc-libs' 'glibc' 'iio-sensor-proxy' 'systemd>=256')
 makedepends=('cargo' 'pkgconf' 'rust' 'xz')
 options=('!debug')
 source=("${pkgname}-${pkgver}.tar.gz")
