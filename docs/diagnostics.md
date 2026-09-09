@@ -74,6 +74,38 @@ backups, or state directories. An empty report is not success: check that the
 new binaries and setting are active. Locally overridden development binaries
 can differ from the package manager's version.
 
+## Sustained keybag relay restarts
+
+Authentication normally stops the shared relay, uses the exclusive SEP lease,
+then restores the relay. `phase=relay result=ok` records a clean relay **exit**,
+not startup readiness. Those clean handoffs do not increment systemd's failure
+restart counter. Inspect the current state without restarting anything:
+
+```bash
+systemctl show t1bridge-keybag.service \
+  -p ActiveState -p SubState -p NRestarts -p Result -p RestartUSecNext
+```
+
+For [issue #14](https://github.com/standardagents/t1bridge/issues/14), report
+whether `NRestarts` is increasing, the first failing stage, the installed
+package versions, and whether authentication or lid handling was active.
+Use existing evidence; do not trigger a lid/suspend test or reset protected
+state. The relay can fail without lid activity. A rapid lock-screen retry
+loop is a separate consumer behavior, not proof that each attempt reached SEP.
+
+Interpret `component=sep phase=sep-lease` codes as T1Bridge operation results:
+`-103` means cancellation, `-111` means keybag validation/protocol failure,
+and `1` means a remote operation error. They are not Linux errno values or
+proof of a particular underlying SEP fault. Structured records require the
+[diagnostic setting](#enable); their absence with logging disabled is expected.
+
+The source service now backs off automatic failure restarts from 2 seconds to
+60 seconds over five exponential steps (systemd 254 or newer). This preserves
+the initial boot retry and reduces a persistent storm; it does not repair the
+underlying keybag failure or rate-limit downstream lock-screen requests. An
+installed package may still use the earlier fixed two-second policy. Recovery
+on affected hardware remains unverified.
+
 ## Coverage and format
 
 | Component | Recorded boundaries |

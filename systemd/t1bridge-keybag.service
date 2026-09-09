@@ -13,6 +13,9 @@ Group=root
 UMask=0077
 Restart=on-failure
 RestartSec=2
+# Preserve the quick boot retry without hammering a persistently failed SEP.
+RestartSteps=5
+RestartMaxDelaySec=60
 TimeoutStartSec=35
 TimeoutStopSec=5
 NoNewPrivileges=yes
